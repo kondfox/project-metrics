@@ -1,12 +1,14 @@
 # project-metrics
 
-> **Status: early development.** Milestone M1 is done: pmx sets up a multi-repo workspace, collects the
-> git-derived metrics (activity, rework, tests/docs-with-code, multi-stack, AI-assisted) incrementally,
-> and reproduces the private prototype. No dashboard yet. The design lives in the [wiki](wiki/README.md).
+> **Status: early development.** Milestones M1–M2 are done: pmx sets up a multi-repo workspace, collects
+> the git-derived metrics (activity, rework, tests/docs-with-code, multi-stack, AI-assisted) incrementally,
+> reproduces the private prototype, and shows a project dashboard. Snapshot metrics (duplication,
+> security), PR flow and Velocity come next. The design lives in the [wiki](wiki/README.md).
 
 ## Try it
 
-Needs Rust (stable) and git ≥ 2.30.
+Needs Rust (stable) with the `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`;
+without it the dashboard can't compute custom ranges) and git ≥ 2.30.
 
 ```sh
 cargo build --release && export PATH="$PWD/target/release:$PATH"
@@ -18,13 +20,14 @@ pmx people                   # who is who across repos; --apply writes [people]
 pmx check                    # paths, branches, tokens, unmapped identities
 pmx plan                     # what collect would do, and how long it should take
 pmx collect                  # progress + ETA; Ctrl-C and re-run to resume
+pmx serve --open             # the dashboard at http://127.0.0.1:7878 (includes the private lead view)
+pmx export --format html     # out/dashboard.html: one self-contained file to share
 pmx export --format long --weekly
 ```
 
 `collect` writes `out/project.json` (team level; people are pseudonymous ids) and
 `out/private/leads.json` (per-person drill-downs, for the lead only). Re-runs only read new commits.
-A config from the Python prototype converts with `pmx import-config config_acme.json`. The dashboard
-comes next (M2).
+A config from the Python prototype converts with `pmx import-config config_acme.json`.
 
 ## Design
 
@@ -38,6 +41,9 @@ comes next (M2).
 Full plan and milestones: [wiki/tool-implementation-plan.md](wiki/tool-implementation-plan.md).
 
 ## License
+
+The dashboard bundles [Apache ECharts](https://echarts.apache.org/) 5.6.0 (Apache-2.0); its licence and
+notice are in [crates/pmx/web/vendor](crates/pmx/web/vendor).
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT),
 at your option.

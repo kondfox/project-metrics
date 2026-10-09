@@ -21,6 +21,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+          # The dashboard embeds pm-metrics compiled to WASM (crates/pmx/build.rs).
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       # Tests build scripted git repos; give git an identity.
       - run: git config --global user.name "CI" && git config --global user.email "ci@example.com"
@@ -29,3 +31,6 @@ jobs:
       # Synthetic fixtures only. The parity harness (pmx-parity) needs the private golden set and
       # runs locally.
       - run: cargo test --workspace
+        env:
+          # Fail instead of skipping the WASM/CLI consistency check when node is missing.
+          PMX_REQUIRE_NODE: "1"

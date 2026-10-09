@@ -405,6 +405,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
 
 [[package]]
+name = "libm"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+
+[[package]]
 name = "libsqlite3-sys"
 version = "0.38.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -502,6 +508,7 @@ name = "pm-metrics"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "libm",
  "pm-classify",
  "serde",
  "serde_json",
@@ -511,6 +518,17 @@ dependencies = [
 name = "pm-progress"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
+]
+
+[[package]]
+name = "pm-wasm"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "pm-classify",
+ "pm-metrics",
+ "serde",
  "serde_json",
 ]
 

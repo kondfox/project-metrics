@@ -38,7 +38,9 @@ deviates from the prototype it says so with **⟂ change vs prototype**.
   (window end, partial-period flags, "last complete month"), and a repo may pin `rev = "<sha>"` instead of
   following `branch`. `meta` always records the measured tip SHA of every repo. A run with the same pinned
   SHAs, `--as-of`, config and tool versions must produce identical non-LLM output. This is what the parity
-  harness ([parity.md](parity.md)) relies on. **⟂ new vs prototype.**
+  harness ([parity.md](parity.md)) relies on. **⟂ new vs prototype.** Transcendental functions use the
+  portable `libm` implementation, so the same input gives bit-identical numbers on every OS and in the
+  dashboard's WASM engine (plan D16).
 - **Commit selection is by author date, in code** (decided 2026-10-09, M1a): a commit belongs to the
   project if its author date is on or after `range_start` and on or before `as_of`. pmx does not use
   `git log --since`: that filters on the committer date, a bare date takes the *current time of day*
@@ -434,7 +436,7 @@ rubric version, classifier per package, constituents present}`. Per-person drill
 points) go to a separate `private/leads.json`, never into the shared file. The per-person day components
 in `days` (commits and lines per person, needed for multi-stack, active devs and commits per dev over any
 range) use **pseudonymous ids** (`p1`, `p2`, … by sorted name); the id → name map is only in
-`private/leads.json` (decided 2026-10-09, plan D9). The dashboard recomputes custom ranges from `days`. The fleet view is an
+`private/leads.json` (decided 2026-10-09, plan D9). The dashboard recomputes custom ranges from `days` with the same Rust code compiled to WASM (plan D15). The fleet view is an
 aggregate of these per-project files.
 
 ### 10.7 Metric ids (series and long format)

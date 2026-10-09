@@ -126,7 +126,10 @@ pub fn quality(subscores: &[Option<f64>]) -> Option<f64> {
     if present.is_empty() {
         return None;
     }
-    Some((present.iter().map(|s| s.ln()).sum::<f64>() / present.len() as f64).exp())
+    // libm for bit-identical results across platforms and WASM (see stats::entropy_norm).
+    Some(libm::exp(
+        present.iter().map(|s| libm::log(*s)).sum::<f64>() / present.len() as f64,
+    ))
 }
 
 /// Every metric of one bucket: `values[id]` with its denominator `n[id]` (for the low-n flag).

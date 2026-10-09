@@ -18,7 +18,7 @@ pm-git.workspace = true
 pm-metrics.workspace = true
 pm-progress.workspace = true
 anyhow.workspace = true
-chrono.workspace = true
+chrono = { workspace = true, features = ["clock"] }
 clap.workspace = true
 rusqlite.workspace = true
 serde.workspace = true

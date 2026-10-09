@@ -99,7 +99,17 @@ enum Command {
         #[command(flatten)]
         run: RunArgs,
     },
-    /// Print out/project.json in another format.
+    /// Serve the dashboard on http://127.0.0.1 (re-reads out/ on every reload; includes the
+    /// private lead view, since only this machine can connect).
+    Serve {
+        #[arg(long, default_value_t = 7878)]
+        port: u16,
+        /// Open it in the default browser.
+        #[arg(long)]
+        open: bool,
+    },
+    /// Write out/project.json in another format: `long` (CSV to stdout) or `html` (the dashboard
+    /// as one self-contained file).
     Export {
         #[arg(long, value_enum)]
         format: Format,
@@ -107,6 +117,12 @@ enum Command {
         weekly: bool,
         #[arg(long)]
         monthly: bool,
+        /// html: where to write (default out/dashboard.html).
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+        /// html: include the per-person lead view (out/private/leads.json). Don't share that file.
+        #[arg(long)]
+        with_private: bool,
     },
 }
 
@@ -165,6 +181,8 @@ enum PeopleCommand {
 enum Format {
     /// project,metric,period,value,n (parity.md §1.1)
     Long,
+    /// The dashboard as one HTML file.
+    Html,
 }
 
 fn confirm(question: &str, default: bool) -> bool {
@@ -648,10 +666,55 @@ fn run(cli: Cli) -> Result<()> {
             let opts = run_options(&run);
             cmd_plan(&ws, opts)?;
         }
+        Command::Serve { port, open } => {
+            let out = ws_dir.join("out");
+            pmx::dashboard::render_workspace(&out, true)?;
+            let listener = std::net::TcpListener::bind(("127.0.0.1", port))
+                .with_context(|| format!("cannot listen on 127.0.0.1:{port} (try --port)"))?;
+            let url = format!("http://{}/", listener.local_addr()?);
+            eprintln!("serving {} at {url} (Ctrl-C to stop)", out.display());
+            if !pmx::dashboard::has_engine() {
+                eprintln!("note: this pmx was built without the WASM engine; custom ranges are off");
+            }
+            if open {
+                pmx::dashboard::open_browser(&url);
+            }
+            pmx::dashboard::serve(listener, &out)?;
+        }
+        Command::Export {
+            format: Format::Html,
+            output,
+            with_private,
+            ..
+        } => {
+            let out = ws_dir.join("out");
+            let html = pmx::dashboard::render_workspace(&out, with_private)?;
+            let dest = output.unwrap_or_else(|| {
+                out.join(if with_private {
+                    "private/dashboard.html"
+                } else {
+                    "dashboard.html"
+                })
+            });
+            if let Some(dir) = dest.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::write(&dest, html).with_context(|| format!("writing {}", dest.display()))?;
+            eprintln!(
+                "wrote {}{}",
+                dest.display(),
+                if with_private {
+                    " (contains per-person data: lead only, don't share)"
+                } else {
+                    ""
+                }
+            );
+        }
         Command::Export {
             format,
             weekly,
             monthly,
+            ..
         } => {
             let path = ws_dir.join("out").join("project.json");
             let text = std::fs::read_to_string(&path)
@@ -663,6 +726,7 @@ fn run(cli: Cli) -> Result<()> {
             let cadence = if weekly { Cadence::Weekly } else { Cadence::Monthly };
             match format {
                 Format::Long => print!("{}", to_csv(&long_rows(&p, cadence))),
+                Format::Html => unreachable!("handled above"),
             }
         }
     }

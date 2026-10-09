@@ -46,8 +46,9 @@ pub fn entropy_norm(values: &[u64]) -> f64 {
     if ps.len() <= 1 {
         return 0.0;
     }
-    let h: f64 = -ps.iter().map(|p| p * p.ln()).sum::<f64>();
-    h / (values.len() as f64).ln()
+    // libm, not the platform's `ln`: identical results natively and in the WASM dashboard.
+    let h: f64 = -ps.iter().map(|p| p * libm::log(*p)).sum::<f64>();
+    h / libm::log(values.len() as f64)
 }
 
 /// `100 · num / den`, or `None` when there is no denominator (spec §1.1: no data ≠ zero).

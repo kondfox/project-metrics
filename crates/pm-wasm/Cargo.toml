@@ -1,15 +1,19 @@
 [package]
-name = "pm-metrics"
-description = "Per-day components, roll-ups, ratios and scores. No I/O (also meant to compile to WASM)"
+name = "pm-wasm"
+description = "pm-metrics for the dashboard: custom-range metrics over a project's days, as a WASM module"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 pm-classify.workspace = true
+pm-metrics.workspace = true
 chrono.workspace = true
-libm.workspace = true
 serde.workspace = true
 serde_json.workspace = true

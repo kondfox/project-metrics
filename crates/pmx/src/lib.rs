@@ -3,6 +3,7 @@
 pub mod cache;
 pub mod check;
 pub mod collect;
+pub mod dashboard;
 pub mod export;
 pub mod ingest;
 pub mod people;
