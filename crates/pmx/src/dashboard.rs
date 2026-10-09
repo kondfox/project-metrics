@@ -9,11 +9,16 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use pm_metrics::ProjectFile;
 
-const TEMPLATE: &str = include_str!("../web/index.html");
-const CSS: &str = include_str!("../web/style.css");
-const APP: &str = include_str!("../web/app.js");
-const ECHARTS: &str = include_str!("../web/vendor/echarts.min.js");
+/// The built React app: one HTML file (see build.rs and web/vite.config.ts).
+const PAGE: &str = include_str!(concat!(env!("OUT_DIR"), "/web/index.html"));
 const WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pm_wasm.wasm"));
+/// Where the page expects its data (web/index.html).
+const DATA_OPEN: &str = r#"<script id="pmx-data" type="application/json">"#;
+
+/// Was the dashboard app built in (rather than the placeholder page)?
+pub fn has_dashboard() -> bool {
+    PAGE.contains(r#"<script type="module">"#)
+}
 
 /// Is the metrics engine built in (see `build.rs`)?
 pub fn has_engine() -> bool {
@@ -46,31 +51,6 @@ fn script_safe(json: &str) -> String {
     json.replace("</", "<\\/").replace("<!--", "<\\!--")
 }
 
-/// Fill `{{KEY}}` placeholders in one pass, so inserted text is never scanned again.
-fn fill(template: &str, values: &[(&str, &str)]) -> String {
-    let mut out = String::with_capacity(template.len() + values.iter().map(|(_, v)| v.len()).sum::<usize>());
-    let mut rest = template;
-    while let Some(i) = rest.find("{{") {
-        out.push_str(&rest[..i]);
-        let after = &rest[i + 2..];
-        match after
-            .find("}}")
-            .and_then(|j| values.iter().find(|(k, _)| *k == &after[..j]).map(|(_, v)| (j, v)))
-        {
-            Some((j, v)) => {
-                out.push_str(v);
-                rest = &after[j + 2..];
-            }
-            None => {
-                out.push_str("{{");
-                rest = after;
-            }
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
@@ -87,16 +67,14 @@ pub fn render(project_json: &str, leads_json: Option<&str>) -> Result<String> {
         leads_json.map(script_safe).unwrap_or_else(|| "null".into()),
         base64(WASM)
     );
-    let title = html_escape(&format!("{} · pmx", p.project.name));
-    Ok(fill(
-        TEMPLATE,
-        &[
-            ("TITLE", &title),
-            ("CSS", CSS),
-            ("DATA", &data),
-            ("ECHARTS", ECHARTS),
-            ("APP", APP),
-        ],
+    let title = format!("<title>{}</title>", html_escape(&format!("{} · pmx", p.project.name)));
+    let at = PAGE.find(DATA_OPEN).context("the dashboard page has no data element")? + DATA_OPEN.len();
+    let (head, tail) = PAGE.split_at(at);
+    let close = tail.find("</script>").context("unterminated data element")?;
+    Ok(format!(
+        "{}{data}{}",
+        head.replacen("<title>pmx</title>", &title, 1),
+        &tail[close..]
     ))
 }
 
@@ -193,24 +171,11 @@ mod tests {
     }
 
     #[test]
-    fn fill_is_single_pass() {
-        let out = fill("a{{X}}b{{Y}}c{{Z}}", &[("X", "{{Y}}"), ("Y", "y")]);
-        assert_eq!(out, "a{{Y}}byc{{Z}}");
-    }
-
-    #[test]
-    fn inlined_assets_cannot_close_their_elements() {
-        for (name, text, closer) in [
-            ("echarts", ECHARTS, "</script"),
-            ("app.js", APP, "</script"),
-            ("style.css", CSS, "</style"),
-        ] {
-            let lower = text.to_lowercase();
-            assert!(
-                !lower.contains(closer) && !lower.contains("<!--"),
-                "{name} must not contain {closer} or <!--"
-            );
-        }
+    fn data_goes_into_its_element() {
+        assert_eq!(PAGE.matches(DATA_OPEN).count(), 1, "exactly one data element");
+        let project = serde_json::json!({"schema": "x"}).to_string();
+        // Not a project file: rejected before anything is rendered.
+        assert!(render(&project, None).is_err());
     }
 
     #[test]

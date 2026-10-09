@@ -143,6 +143,7 @@ pub enum FileClass {
 }
 
 /// Stack role (spec §1.5).
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {

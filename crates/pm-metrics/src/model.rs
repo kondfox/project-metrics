@@ -17,6 +17,7 @@ pub const LEADS_SCHEMA: &str = "pmx.leads/1";
 /// Buckets with fewer denominator events are flagged low-n (spec §1.1).
 pub const LOW_N_THRESHOLD: u64 = 10;
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RepoInfo {
     pub name: String,
@@ -27,6 +28,7 @@ pub struct RepoInfo {
     pub tip_date: String,
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProjectInfo {
     pub name: String,
@@ -36,6 +38,7 @@ pub struct ProjectInfo {
     pub repos: Vec<RepoInfo>,
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Meta {
     pub generated_at: String,
@@ -56,16 +59,20 @@ pub struct Meta {
     pub not_measured: Vec<String>,
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Detail {
     pub stack_mix: BTreeMap<Role, f64>,
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProjectFile {
     pub schema: String,
     pub project: ProjectInfo,
     /// Sparse per-day components; people are pseudonymous ids (`p1`, `p2`, …).
+    /// Opaque to the dashboard: only the WASM engine reads it.
+    #[cfg_attr(feature = "ts", ts(type = "Record<string, unknown>"))]
     pub days: Days,
     pub snapshots: BTreeMap<String, Value>,
     pub weeks: Vec<String>,
@@ -82,6 +89,7 @@ pub struct ProjectFile {
     pub meta: Meta,
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LeadsFile {
     pub schema: String,
@@ -245,4 +253,21 @@ pub fn build(input: BuildInput) -> (ProjectFile, LeadsFile) {
         meta,
     };
     (file, leads)
+}
+
+/// `cargo test -p pm-metrics --features ts` regenerates the dashboard's types; CI fails if the
+/// committed ones differ.
+#[cfg(all(test, feature = "ts"))]
+mod ts_export {
+    use ts_rs::{Config, TS};
+
+    #[test]
+    fn export_dashboard_types() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../pmx/web/src/generated");
+        // serde writes 64-bit integers as JSON numbers, and every count fits in 2^53.
+        let cfg = Config::new().with_large_int("number").with_out_dir(dir);
+        super::ProjectFile::export_all(&cfg).unwrap();
+        super::LeadsFile::export_all(&cfg).unwrap();
+        crate::Metrics::export_all(&cfg).unwrap();
+    }
 }

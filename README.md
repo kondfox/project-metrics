@@ -7,8 +7,11 @@
 
 ## Try it
 
-Needs Rust (stable) with the `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`;
-without it the dashboard can't compute custom ranges) and git ≥ 2.30.
+Needs Rust (stable) with the `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`),
+Node ≥ 20.19 (the build compiles the dashboard) and git ≥ 2.30. Without the target or Node pmx still
+builds, but with a reduced or placeholder dashboard.
+
+Try it on a fictional project first: `pmx demo /tmp/acme && pmx -C /tmp/acme serve --open`.
 
 ```sh
 cargo build --release && export PATH="$PWD/target/release:$PATH"
@@ -41,9 +44,6 @@ A config from the Python prototype converts with `pmx import-config config_acme.
 Full plan and milestones: [wiki/tool-implementation-plan.md](wiki/tool-implementation-plan.md).
 
 ## License
-
-The dashboard bundles [Apache ECharts](https://echarts.apache.org/) 5.6.0 (Apache-2.0); its licence and
-notice are in [crates/pmx/web/vendor](crates/pmx/web/vendor).
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT),
 at your option.

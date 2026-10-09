@@ -7,9 +7,14 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# Derive TypeScript types for the dashboard (crates/pmx/web/src/generated).
+ts = ["dep:ts-rs", "pm-classify/ts"]
+
 [dependencies]
 pm-classify.workspace = true
 chrono.workspace = true
 libm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+ts-rs = { workspace = true, optional = true }

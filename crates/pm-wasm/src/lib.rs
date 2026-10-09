@@ -8,7 +8,7 @@
 //! Requests:
 //! - `{"op": "load", "days": {…}, "breadth_roles": […], "ai_attribution": bool}` → `{"mix_roles": […]}`
 //! - `{"op": "range", "start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}` →
-//!   `{"values": {id: v|null}, "n": {id: n|null}, "stack_mix": {role: %}, "leaders": […]}`
+//!   `Metrics` (`{values, n, stack_mix, leaders}`; TypeScript type in crates/pmx/web/src/generated)
 //!
 //! Errors come back as `{"error": "…"}`.
 
@@ -71,12 +71,7 @@ pub fn handle(request: &str) -> String {
             None => json!({ "error": "load the project first" }),
             Some(st) => {
                 let m = metrics(&aggregate(&st.days, start, end), &st.opts);
-                json!({
-                    "values": m.values,
-                    "n": m.n,
-                    "stack_mix": m.stack_mix,
-                    "leaders": m.leaders,
-                })
+                serde_json::to_value(&m).expect("metrics serialize")
             }
         }),
     };

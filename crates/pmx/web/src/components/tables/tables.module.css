@@ -1,0 +1,36 @@
+.table {
+  border-collapse: collapse;
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.table th,
+.table td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+.table th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 12px;
+}
+.table caption {
+  caption-side: bottom;
+  text-align: left;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 2px;
+}
+.right {
+  text-align: right !important;
+}
+.private {
+  border-left: 4px solid var(--accent);
+}
+.wrap {
+  overflow-x: auto;
+}

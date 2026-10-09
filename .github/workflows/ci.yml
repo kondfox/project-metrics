@@ -16,6 +16,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+    env:
+      # A missing dashboard or WASM engine is a build error in CI, not a fallback.
+      PMX_REQUIRE_WEB: "1"
+      PMX_REQUIRE_WASM: "1"
+      PMX_REQUIRE_NODE: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -24,13 +29,23 @@ jobs:
           # The dashboard embeds pm-metrics compiled to WASM (crates/pmx/build.rs).
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/pmx/web/package-lock.json
       # Tests build scripted git repos; give git an identity.
       - run: git config --global user.name "CI" && git config --global user.email "ci@example.com"
+      # Dashboard: typecheck, lint, format, unit tests (crates/pmx/web/README.md).
+      - run: npm ci --no-audit --no-fund
+        working-directory: crates/pmx/web
+      - run: npm run check
+        working-directory: crates/pmx/web
+      # The dashboard's TypeScript types are generated from the Rust model; they must be current.
+      - run: cargo test -p pm-metrics --features ts export_dashboard_types
+      - run: git diff --exit-code -- crates/pmx/web/src/generated
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       # Synthetic fixtures only. The parity harness (pmx-parity) needs the private golden set and
       # runs locally.
       - run: cargo test --workspace
-        env:
-          # Fail instead of skipping the WASM/CLI consistency check when node is missing.
-          PMX_REQUIRE_NODE: "1"

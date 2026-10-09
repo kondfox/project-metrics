@@ -74,6 +74,13 @@ fn collected(root: &Path) -> Workspace {
     ws
 }
 
+fn data_element(page: &str) -> serde_json::Value {
+    let open = r#"<script id="pmx-data" type="application/json">"#;
+    let start = page.find(open).expect("data element") + open.len();
+    let len = page[start..].find("</script>").expect("closed");
+    serde_json::from_str(&page[start..start + len]).expect("valid JSON")
+}
+
 #[test]
 fn renders_one_page_with_private_view_only_on_request() {
     let tmp = tempfile::tempdir().unwrap();
@@ -84,9 +91,14 @@ fn renders_one_page_with_private_view_only_on_request() {
     assert!(!shared.contains("Jane Doe"), "the shared page must not name people");
     let private = dashboard::render_workspace(&ws.out_dir(), true).unwrap();
     assert!(private.contains("Jane Doe"));
-    // The project name is inside a JSON string in a <script>: it must not close the element.
-    assert_eq!(shared.matches("</script>").count(), 3);
-    if std::env::var_os("PMX_REQUIRE_NODE").is_some() {
+
+    // The data element holds valid JSON, and nothing in it (like the project name) ends it early.
+    let data = data_element(&shared);
+    assert_eq!(data["project"]["project"]["name"], "Demo <Shop>");
+    assert!(data["leads"].is_null());
+    assert_eq!(data_element(&private)["leads"]["people"].as_object().unwrap().len(), 3);
+    if std::env::var_os("PMX_REQUIRE_WEB").is_some() {
+        assert!(dashboard::has_dashboard(), "CI builds must embed the React app");
         assert!(dashboard::has_engine(), "CI builds must embed the WASM engine");
     }
 }
@@ -101,7 +113,7 @@ fn engine_reproduces_every_bucket() {
     }
     let wasm = tmp.path().join("pm_wasm.wasm");
     std::fs::write(&wasm, dashboard::engine_wasm()).unwrap();
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("web/check-engine.mjs");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("web/scripts/check-engine.mjs");
     let out = match Command::new("node")
         .arg(&script)
         .arg(&wasm)

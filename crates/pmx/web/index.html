@@ -1,16 +1,14 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{TITLE}}</title>
-<style>{{CSS}}</style>
-</head>
-<body>
-<div id="errors" hidden></div>
-<div id="app"></div>
-<script>window.PMX = {{DATA}};</script>
-<script>{{ECHARTS}}</script>
-<script>{{APP}}</script>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>pmx</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- pmx writes the project data into this element (crates/pmx/src/dashboard.rs). -->
+    <script id="pmx-data" type="application/json"></script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

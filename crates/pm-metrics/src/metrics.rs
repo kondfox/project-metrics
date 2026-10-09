@@ -21,6 +21,7 @@ pub struct MetricOptions {
 }
 
 /// One person's multi-stack line-up in a window (lead-only drill-down).
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Leader {
     pub name: String,
@@ -132,8 +133,9 @@ pub fn quality(subscores: &[Option<f64>]) -> Option<f64> {
     ))
 }
 
-/// Every metric of one bucket: `values[id]` with its denominator `n[id]` (for the low-n flag).
-#[derive(Clone, Debug, Default)]
+/// Every metric of one bucket or range (also the dashboard engine's `range` response).
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct Metrics {
     pub values: BTreeMap<String, Option<f64>>,
     pub n: BTreeMap<String, Option<u64>>,
@@ -223,6 +225,7 @@ pub fn metrics(agg: &Day, opts: &MetricOptions) -> Metrics {
     m
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GroupSummary {
     pub commits: u64,
@@ -245,6 +248,7 @@ impl GroupSummary {
 }
 
 /// AI vs human over the trailing 12 months (spec §6). Project-level only.
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AiCompare {
     pub from: NaiveDate,

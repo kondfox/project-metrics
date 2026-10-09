@@ -30,7 +30,10 @@ in the browser. A second command combines several projects into the **fleet view
 | D11 | **Resume unit = one repo's stage** (ingest, rework walk). Each finished stage is written to the cache at once, so Ctrl-C loses only the stages in flight. A stage continues from its cached SHA when the new tip descends from it; otherwise (force-push, `--full`) the repo is recomputed | 2026-10-09 |
 | D12 | Git reads are prefiltered on the **committer date** (`--since-as-filter`, git ≥ 2.38, 7 days before the author-date bound) so incremental runs don't re-diff old history; the exact author-date filter stays in code (spec §1.1). Older git works, just slower | 2026-10-09 |
 | D13 | `[fte]` is `source = "static"` with `value` or dated `periods`, or `source = "file"` with the spec §10.2 JSON (replaces the `fte.toml` placeholder) | 2026-10-09 |
-| D14 | **Dashboard without a JS build step:** plain JavaScript (no TypeScript, no bundler) plus a vendored, pinned ECharts (5.6.0, Apache-2.0, licence and notice shipped beside it). Building pmx needs only cargo | 2026-10-09 |
+| D14 | ~~Dashboard without a JS build step (plain JS + vendored ECharts)~~ **Superseded by D18** the same day: the dashboard will grow, so it needs a component base | 2026-10-09 |
+| D18 | **Dashboard in React 19 + TypeScript** (strict), built by Vite into one HTML file (a small in-repo plugin inlines JS and CSS, so D17 holds). ECharts 6 from npm, tree-shaken. Reusable components (tiles with their three states, a pure chart-option builder, a typed table), a metric registry for presentation, a provider + hooks for state. ESLint, Prettier and Vitest; `npm run check` in CI. `pmx`'s build script runs the npm build; without Node it embeds a placeholder page (CI forbids that with `PMX_REQUIRE_WEB`). Architecture: `crates/pmx/web/README.md` | 2026-10-09 |
+| D19 | **TypeScript types are generated from the Rust model** (`ts-rs`, `pm-metrics --features ts` → `crates/pmx/web/src/generated`); CI fails when they are stale. Metric math stays in Rust (WASM engine), never in TypeScript | 2026-10-09 |
+| D20 | **`pmx demo <dir>`** writes a fictional four-repo project (git fast-import, deterministic) and collects it: for trying pmx, for the dashboard's dev server (`npm run dev-data`) and for screenshots, with no real data anywhere | 2026-10-09 |
 | D15 | **WASM engine:** `pm-wasm` exposes pm-metrics over a raw C ABI with JSON in and out (no wasm-bindgen). `pmx`'s build script compiles it for `wasm32-unknown-unknown`; without that target pmx still builds, and the dashboard falls back to whole weeks and months | 2026-10-09 |
 | D16 | **Bit-identical floats everywhere:** pm-metrics uses the pure-Rust `libm` for `ln`/`exp` (entropy, Quality geomean), so native builds on any OS and the WASM engine agree to the last bit. A test checks every week and month of a fixture through the WASM module | 2026-10-09 |
 | D17 | **One self-contained page:** data, ECharts and the WASM engine are inlined into one HTML file, so it works from `pmx serve`, as a shared file, and opened from disk. `pmx serve` binds to 127.0.0.1 only and includes the private lead view; `pmx export --format html` leaves it out unless `--with-private` (written under `out/private/`) | 2026-10-09 |
@@ -64,10 +67,10 @@ pmx fleet serve|export --manifest fleet.toml ──► fleet.json + fleet dashbo
 | `pm-llm` | The classifier: the shared schema (§6.1), providers, data-policy guard, cache, eval harness |
 | `pm-metrics` | Roll-ups, ratios, scores (Quality, Security, Velocity, multi-stack). No I/O. **Also compiled to WASM** for the dashboard |
 | `pm-progress` | Work planning, ETA model, renderers (TTY / plain / JSON) (§5) |
-| `pmx` (lib + bin) | Collect pipeline, `.pmx/cache.sqlite`, outputs, export; CLI (`clap`); `serve` (a small std-only loopback server); the dashboard (`crates/pmx/web/`) inlined into one page with `include_str!` (D14, D17) |
+| `pmx` (lib + bin) | Collect pipeline, `.pmx/cache.sqlite`, outputs, export; CLI (`clap`); `serve` (a small std-only loopback server); `demo` (D20); the built dashboard embedded as one page (D17, D18) |
 | `pm-wasm` (cdylib, unpublished) | pm-metrics for the browser: custom-range metrics over `days` (D15) |
 | `pmx-parity` (bin, unpublished) | Parity harness against the private golden set (D10, [parity.md](parity.md)) |
-| `crates/pmx/web/` | Plain-JS + ECharts dashboard (the prototype already uses ECharts); loads the `pm-wasm` engine (D14). It lives inside the `pmx` crate so the crate can be packaged |
+| `crates/pmx/web/` | React + TypeScript dashboard with ECharts (D18); loads the `pm-wasm` engine; types generated from `pm-metrics` (D19). Inside the `pmx` crate so the crate can be packaged |
 
 ### 2.2 Technical choices
 

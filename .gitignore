@@ -2,9 +2,8 @@
 /target/
 **/*.rs.bk
 
-# Web dashboard
-/web/node_modules/
-/web/dist/
+# Web dashboard (crates/pmx/web/.gitignore has the rest)
+node_modules/
 
 # pmx workspaces: never commit cache, clones or outputs (outputs contain per-person data)
 .pmx/

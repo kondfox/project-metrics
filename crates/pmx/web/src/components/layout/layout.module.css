@@ -1,0 +1,41 @@
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 20px;
+  margin-bottom: 12px;
+}
+.header h1 {
+  font-size: 22px;
+  margin: 0;
+}
+.sub {
+  color: var(--muted);
+}
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0 4px;
+}
+.controls select,
+.controls input {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+.legend {
+  color: var(--muted);
+  font-size: 12px;
+}
+.footer {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 28px 0 8px;
+}
+.footer code {
+  font-family: var(--mono);
+  font-size: 11px;
+}

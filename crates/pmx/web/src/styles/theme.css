@@ -1,0 +1,79 @@
+/* Design tokens. Components use these variables only; charts read them too (chartTheme.ts). */
+:root {
+  --bg: #f7f7f5;
+  --panel: #ffffff;
+  --ink: #1d1d1b;
+  --muted: #6b6b66;
+  --line: #e4e3df;
+  --faint: #f0efeb;
+  --accent: #2f6fde;
+  --on-accent: #ffffff;
+  --good: #1f8a5b;
+  --warn: #b7791f;
+  --bad: #c2412d;
+  --band-a: #1f8a5b;
+  --band-b: #5aa469;
+  --band-c: #b7791f;
+  --band-d: #d9774a;
+  --band-e: #c2412d;
+  --series-1: #2f6fde;
+  --series-2: #e07b39;
+  --series-3: #1f8a5b;
+  --series-4: #8e5bd1;
+  --series-5: #c2412d;
+  --series-6: #4aa3b5;
+  --series-7: #8a8a85;
+  --radius: 8px;
+  --gap: 8px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141413;
+    --panel: #1d1d1b;
+    --ink: #ecebe6;
+    --muted: #9c9b95;
+    --line: #2f2e2b;
+    --faint: #262624;
+    --accent: #6d9cf0;
+    --on-accent: #10131a;
+    --good: #4fbf8a;
+    --warn: #e0a64a;
+    --bad: #ef7b65;
+    --series-1: #6d9cf0;
+    --series-2: #f0a06a;
+    --series-3: #4fbf8a;
+    --series-4: #b48ef0;
+    --series-5: #ef7b65;
+    --series-6: #6fc3d3;
+    --series-7: #9c9b95;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.45 var(--font);
+}
+
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}

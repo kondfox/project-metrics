@@ -1,0 +1,96 @@
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  margin-left: 6px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.band {
+  display: inline-block;
+  min-width: 22px;
+  text-align: center;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 1px 5px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.A {
+  background: var(--band-a);
+}
+.B {
+  background: var(--band-b);
+}
+.C {
+  background: var(--band-c);
+}
+.D {
+  background: var(--band-d);
+}
+.E {
+  background: var(--band-e);
+}
+
+.banner {
+  background: var(--faint);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+.banner.warn {
+  border-left-color: var(--warn);
+}
+.banner.error {
+  border-left-color: var(--bad);
+  white-space: pre-wrap;
+  font-family: var(--mono);
+}
+
+.section {
+  margin: 24px 0 8px;
+}
+.section > h2 {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+.stack > * + * {
+  margin-top: var(--gap);
+}
+
+.seg {
+  display: inline-flex;
+}
+.seg button {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.seg button + button {
+  border-left: 0;
+}
+.seg button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+.seg button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+.seg button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}

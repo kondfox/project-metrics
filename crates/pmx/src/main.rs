@@ -99,6 +99,17 @@ enum Command {
         #[command(flatten)]
         run: RunArgs,
     },
+    /// Create a fictional demo project in DIR (repos + pmx.toml) and collect it.
+    Demo {
+        dir: PathBuf,
+        /// Make the history end on this date (default: today).
+        #[arg(long)]
+        as_of: Option<NaiveDate>,
+        /// Also write project.json, leads.json and the WASM engine here (for the dashboard's dev
+        /// server).
+        #[arg(long)]
+        dev_data: Option<PathBuf>,
+    },
     /// Serve the dashboard on http://127.0.0.1 (re-reads out/ on every reload; includes the
     /// private lead view, since only this machine can connect).
     Serve {
@@ -665,6 +676,22 @@ fn run(cli: Cli) -> Result<()> {
             let ws = Workspace::load(&ws_dir)?;
             let opts = run_options(&run);
             cmd_plan(&ws, opts)?;
+        }
+        Command::Demo { dir, as_of, dev_data } => {
+            let as_of = as_of.unwrap_or_else(today);
+            let ws = pmx::demo::generate(&dir, as_of)?;
+            eprintln!("wrote a fictional project to {}", dir.display());
+            let mut opts = CollectOptions::new(as_of);
+            opts.fetch = false;
+            cmd_collect(&ws, opts, Mode::auto())?;
+            if let Some(dev) = dev_data {
+                std::fs::create_dir_all(&dev)?;
+                std::fs::copy(ws.out_dir().join("project.json"), dev.join("project.json"))?;
+                std::fs::copy(ws.out_dir().join("private/leads.json"), dev.join("leads.json"))?;
+                std::fs::write(dev.join("pm_wasm.wasm"), pmx::dashboard::engine_wasm())?;
+                eprintln!("dev data in {}", dev.display());
+            }
+            eprintln!("next: pmx -C {} serve --open", dir.display());
         }
         Command::Serve { port, open } => {
             let out = ws_dir.join("out");
