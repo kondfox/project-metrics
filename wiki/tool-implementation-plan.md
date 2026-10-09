@@ -85,7 +85,7 @@ pmx fleet serve|export --manifest fleet.toml ──► fleet.json + fleet dashbo
 One project is one **workspace folder**. The repos it lists can live anywhere.
 
 ```
-~/metrics/opus-leo/
+~/metrics/acme-shop/
   pmx.toml        ← project definition (safe to commit; tokens only as env-var names)
   .pmx/           ← cache + bare clones of URL repos (gitignored)
   out/            ← project.json; out/private/ is never shared
@@ -99,7 +99,7 @@ One project is one **workspace folder**. The repos it lists can live anywhere.
 | `pmx repo add <path\|url> [--role] [--branch]` · `list` · `remove` | Edit the repo list. For a URL, pmx keeps a bare clone in `.pmx/repos/` and only reads from it, so working copies are never touched |
 | `pmx people` | Lists every author identity across **all** repos plus code-host logins, and proposes merges (same name with different emails, noreply addresses, matching logins) and bots/externals. You accept or edit; it writes `[people]`. This step is what makes cross-repo per-person metrics (multi-stack, active devs, mentoring) correct |
 | `pmx check` | Every path exists, every branch resolves, tokens are present, no unmapped identities above a commit threshold |
-| `pmx import-config config_opus.json` | Converts a prototype config (plus `externals.json`, `fte.json`, `secrets_triage.json`) |
+| `pmx import-config config_acme.json` | Converts a prototype config (plus `externals.json`, `fte.json`, `secrets_triage.json`) |
 
 `pmx collect` runs `git fetch` by default. This only updates remote-tracking refs. `--no-fetch`
 measures what is already there.
@@ -225,7 +225,7 @@ TTY (`indicatif`):
 pmx collect · Project A                         overall ▕████████░░░░░░░░▏ 52%  ETA ~6m
  ✓ fetch          5 repos                                    4s
  ✓ git ingest     12,418 commits (9,870 cached)              18s
- ● snapshots      ▕██████░░░░▏ 61/104  jscpd opus-leo-web @ 2026-W33   ~4m
+ ● snapshots      ▕██████░░░░▏ 61/104  jscpd shop-web @ 2026-W33   ~4m
  ● pull requests  ▕████████░░▏ 812/1,003                                ~40s
  ○ velocity       ~140 packages · classifier: jev                       ~1m
  ⚠ semgrep not installed: SAST panels will show "not measured"
