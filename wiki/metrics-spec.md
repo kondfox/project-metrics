@@ -34,6 +34,11 @@ deviates from the prototype it says so with **⟂ change vs prototype**.
   week-end values, the monthly view month-end values; a range shows the value at its end plus the trend.
 - **The current week and month are dynamic** (run date), flagged *partial*. **⟂ change vs prototype**
   (`fleet.py` hard-codes `'2026-09'`).
+- **Reproducible runs (decided 2026-10-09, M0).** `--as-of <date>` replaces the run date everywhere
+  (window end, partial-period flags, "last complete month"), and a repo may pin `rev = "<sha>"` instead of
+  following `branch`. `meta` always records the measured tip SHA of every repo. A run with the same pinned
+  SHAs, `--as-of`, config and tool versions must produce identical non-LLM output. This is what the parity
+  harness ([parity.md](parity.md)) relies on. **⟂ new vs prototype.**
 - **Default window** for headline numbers: the last **complete** month. Scores (Quality, Velocity,
   Security) are also computed per week for the trend lines.
 - **Small samples.** A week often has few events (a 3-person team may merge 5 PRs). Every ratio carries
@@ -87,7 +92,9 @@ Re-baseline tests-with-code history after this change (it will rise for repos us
 ### 1.5 Stack role (per line of work)
 - **Multi-repo project:** role = the repo's configured role (`frontend · backend · mobile · qa · infra ·
   data · docs`).
-- **Monorepo** (`monorepo: true`): role per **file**, first match wins (accepted as-is, validated on Project B):
+- **Per-file repos** (`role = "per-file"` on a repo; **⟂ spec change 2026-10-09:** was project-level
+  `monorepo: true`, so a project can now mix a monorepo with single-role repos): role per **file**, first
+  match wins (accepted as-is, validated on Project B):
   test → `qa`; `.sql` or `/hex_queries/ /dataflow/ /sql/` or `bigquery` → `data`; `.tf/.tfvars` or
   `/infrastructure/ /environment/ /terraform/ /scripts/` → `infra`; `.tsx .jsx .css .scss .less .hbs .vue
   .svelte` or `/ui-react/ /app-ui-react/ /delivery/` or `web-ssr` → `frontend`; else `backend`.
@@ -272,10 +279,10 @@ Per merged PR/MR (bucketed by merge date), excluding bot authors:
 - **PR size** (GitHub only today) = median `additions + deletions`.
 - **Mentoring pairs** = reviewed PRs whose author is **not** an expert in the PR's stack while ≥ 1 reviewer
   **is**. **⟂ unify vs prototype** (the GitHub and GitLab adapters define "expert" differently — lines vs MR
-  count). v1 rule: PR stack = repo role (multi-repo) or the dominant role by added lines (monorepo);
+  count). v1 rule: PR stack = repo role, or for a `per-file` repo the dominant role by added lines;
   expert in stack S = ≥ 3 merged PRs in S **and** ≥ 25% of the top author's count in S.
 - **⟂ gap:** externals are not excluded in the prototype PR layer — apply §1.3 (requires the
-  username→person map, §8.2).
+  login→person mapping in `[people]`, §10.1).
 
 ---
 
@@ -295,36 +302,25 @@ Per merged PR/MR (bucketed by merge date), excluding bot authors:
 ## 10. Inputs & contracts
 
 ### 10.1 Project config (one file per project)
-Replaces `collector/config_*.json` + `tools/externals.json` + `tools/fte.json` + `tools/secrets_triage.json`
-(today these are separate; the tool may keep them separate, but the fields are these):
+A TOML file, `pmx.toml`, in the project's workspace folder (**⟂ spec change 2026-10-09:** was JSON, and
+replaces `collector/config_*.json` + `tools/externals.json` + `tools/fte.json` + `tools/secrets_triage.json`;
+`pmx import-config` converts them). Full commented example: [`examples/pmx.toml`](../examples/pmx.toml);
+setup commands: [tool-implementation-plan.md §3](tool-implementation-plan.md#3-developer-setup-for-a-multi-repo-project).
 
-```jsonc
-{
-  "project": "Project A",
-  "range_start": "2024-09-01",              // earliest date to collect
-  "repos": [
-    { "path": "../shop-api",        // local clone (or url + clone dir)
-      "branch": "origin/development2",      // the integration branch to measure
-      "role": "backend",                    // ignored when monorepo: true
-      "code_host_id": 785 }                 // GitLab project id / GitHub "owner/repo"
-  ],
-  "monorepo": false,                        // true → per-file role (§1.5)
-  "role_rules": null,                       // optional override of the monorepo path hints
-  "breadth_roles": ["frontend","backend","mobile","qa","infra"],
-  "identity": {                             // alias → canonical person
-    "__bots__": ["gitlab-runner@example.com"],
-    "jane.doe@example.com": "Jane Doe"
-  },
-  "usernames": { "jdoe": "Jane Doe" },   // code-host login → person (NEW; for §8)
-  "externals": [ {"name": "Sam Contractor", "email": "…"} ],
-  "ai_attribution": true,                   // false where Co-Authored-By is stripped by policy
-  "security_lockfiles": { "shop-api": ["package-lock.json"] },  // optional; default = auto-discover
-  "code_host": { "type": "gitlab", "base": "https://gitlab.example.com", "token_env": "GL_TOKEN" },
-  "secrets_triage": [ {"repo":"…","file":"…","rule":"…","verdict":"false-positive|rotated|accepted",
-                       "by":"…","date":"YYYY-MM-DD"} ]
-}
-```
-Recommended: auto-discover lockfiles any OSV-Scanner supports, with `security_lockfiles` as override.
+| Key | Meaning |
+|---|---|
+| `[project]` `name`, `range_start`, `breadth_roles`, `ai_attribution` | As before. `ai_attribution = false` where Co-Authored-By is stripped by policy |
+| `[[repo]]` `path` **or** `url` | Local clone, or a URL pmx clones read-only into `.pmx/repos/` |
+| `[[repo]]` `branch`, `rev` | Integration branch to measure; optional `rev` pins a SHA (§1.1 reproducible runs) |
+| `[[repo]]` `role` | `frontend · backend · mobile · qa · infra · data · docs`, or `per-file` (§1.5) |
+| `[[repo]]` `code_host_id`, `classifier`, `data_policy` | GitLab project id / GitHub `owner/repo`; per-repo classifier override and `local-only` guard (§10.3) |
+| `role_rules` | Optional override of the per-file path hints (§1.5) |
+| `[people]` | **⟂ spec change 2026-10-09:** one table replaces `identity` + `usernames`. `"Canonical Name" = [emails…, code-host logins…]`, plus `bots = […]` and `externals = […]` (§1.3) |
+| `security_lockfiles` | Optional override; default = auto-discover every lockfile OSV-Scanner supports |
+| `[code_host]` `type`, `base`, `token_env` | Tokens only by env-var name, never inline |
+| `[fte]` | FTE provider (§10.2) |
+| `[[secrets_triage]]` | `repo, file, rule?, verdict (false-positive · rotated · accepted), by, date` |
+| `[classifiers.<name>]`, `[velocity] classifier` | LLM classifiers (§10.3) |
 
 ### 10.2 FTE provider (external source, stub in v1)
 - Interface: `fte(project, date) → float | null` (FTE on that day; a week/month uses the mean over its
@@ -337,17 +333,27 @@ Recommended: auto-discover lockfiles any OSV-Scanner supports, with `security_lo
   (open-ended `to` = until further notice). Units: full-time equivalents. `null` → Velocity falls back
   to engineer-days (§4).
 
-### 10.3 LLM scorer (Velocity)
-- **Input per package:** `id`, `subjects[]`, `repos[]`, `n_commits`, `added/deleted`, `truncated`, and the
-  diff text (≤ 24 KB) — plus the rubric. Rubric source of truth:
-  [`rubrics/six-axis@1.md`](../rubrics/six-axis@1.md) — ship it with the tool and
-  version it (the version is part of the score cache key); never edit anchors after scoring.
-- **Output per package:** `{ "id": <verbatim>, "R1".."R6": 0–3, "description": "…" }`. The tool computes
-  sum/size/points itself. Ids must be echoed verbatim (fuzzy-matching was needed when a scorer
-  mis-transcribed an accented name).
-- **Non-functional:** non-deterministic and costly (≈ hundreds of packages per project-year). Cache scores
-  by `(package id, diff hash, rubric version)`; only score new/changed packages. If no scorer is
-  configured, Velocity is `null` (not 0).
+### 10.3 LLM classifier (Velocity)
+**⟂ spec change 2026-10-09:** the free-form scorer prompt is replaced by a configurable classifier with one
+schema for every provider. Design: [tool-implementation-plan.md §6](tool-implementation-plan.md#6-llm-classifier-d3).
+- **Schema:** Jev's question/answer format. Request `{state, questions{id: {type: noul|choice|score,
+  instructions, criteria}}}`; response `{answers{id: {type, score|choice|noul, probabilities, confidence}}}`
+  plus `confidence_source` (`model · logprobs · sampled · none`). Providers: `jev`, `openai-compatible`,
+  `anthropic`, `command`. `data_policy = "local-only"` refuses any non-local provider or fallback.
+- **Rubric:** a versioned question set, `six-axis@2`, derived from [`rubrics/six-axis@1.md`](../rubrics/six-axis@1.md)
+  (anchors unchanged). Counting and arithmetic stay in code: R1 = count of per-layer Nouls; R5 = file/module
+  counts plus one Noul; R2/R3/R4/R6 = Score questions with the "take the lower anchor" rule applied in code.
+  Never edit anchors after scoring; any change bumps the version.
+- **State per package:** `id`, `subjects[]`, `repos[]`, changed files with class and role, `n_commits`,
+  `added/deleted`, `truncated`, and the filtered diff (≤ 24 KB).
+- **Output per package (unchanged contract):** `{ "id": <verbatim>, "R1".."R6": 0–3, "description" }`,
+  derived from the answers in code. `description` = ticket id + first commit subject. The tool computes
+  sum/size/points itself.
+- **Cache key:** `(package id, diff hash, rubric version, provider, model version)`. Pin versioned model
+  ids. Only new or changed packages are scored.
+- **Low confidence:** re-ask once with reordered levels; then the configured fallback (if the data policy
+  allows), flagged in the output.
+- No classifier configured → Velocity is `null` (not 0).
 
 ### 10.4 Code-host adapter (PR/MR)
 - Interface: `merged_prs(repo, since) → [{ id, author_login, created_at, merged_at, additions?,
@@ -376,6 +382,7 @@ constituents fed them.
 snapshot metrics}`; `weeks[]`, `months[]` with precomputed `series_weekly` / `series_monthly
 {metric → [value|null]}` plus `n` (denominators) for the low-n flag; `detail{week|month → stack_mix,
 leaders}`; `ai_compare`; `security{snapshot}`; `hotspots[]`; `velocity{packages[] scored, with date}`;
-`meta{generated_at, partial_week, partial_month, tool versions, rules snapshot, rubric version,
-constituents present}`. The dashboard recomputes custom ranges from `days`. The fleet view is an
+`meta{generated_at, as_of, repo tip SHAs, partial_week, partial_month, tool versions, rules snapshot,
+rubric version, classifier per package, constituents present}`. Per-person drill-downs (leaders, per-person
+points) go to a separate `private/leads.json`, never into the shared file. The dashboard recomputes custom ranges from `days`. The fleet view is an
 aggregate of these per-project files.

@@ -401,7 +401,7 @@ derived from schema answers. The rubric version bump (`six-axis@2`) invalidates 
 
 | # | Deliverable | Done when |
 |---|---|---|
-| **M0** | Freeze the prototype outputs for Project A, Project B and Project C, plus the scored Velocity packages, as golden files. List the intentional ⟂ differences from the spec. Update metrics-spec.md with this page's ⟂ changes | Parity harness runs in CI |
+| **M0** | Freeze the prototype outputs for Project A, Project B and Project C at pinned SHAs as golden files (private). Write the deviation register ([parity.md](parity.md)). Update metrics-spec.md with this page's ⟂ changes | Golden set + long-format table exist; the harness runs **locally** against them (golden data is private, so public CI uses synthetic fixtures instead) |
 | **M1** | `pm-config`, `pm-classify`, `pm-git`; `init`, `repo`, `people`, `check`, `import-config`; the progress, resume and ETA framework; activity, rework, tests/docs, multi-stack and AI metrics; `project.json` + `private/leads.json` | Matches the golden files except the listed ⟂ differences |
 | **M2** | Project dashboard: weekly/monthly, custom range via WASM, low-n and "not measured" states, `serve`/`export` | One project viewable end to end |
 | **M3** | `pm-snapshot`: scc, jscpd, osv-scanner, gitleaks, semgrep; Quality with duplication; Security score; SAST trend; `doctor`, `tools install` | Quality and Security reproduced for all three projects |

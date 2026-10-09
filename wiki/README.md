@@ -21,6 +21,7 @@ mention `collector/…` and `tools/…`: these are the private Python prototype,
 ## Start here
 - [metrics-overview.md](metrics-overview.md) — **one-pager**: what we measure and how, with links
 - [metrics-spec.md](metrics-spec.md) — **v1 implementation spec**: exact definitions, config, input contracts (source of truth for the tool)
+- [parity.md](parity.md) — **M0**: how the tool is checked against the private prototype, and the register of intentional differences
 - [tool-implementation-plan.md](tool-implementation-plan.md) — **implementation plan** for the Rust tool (`pmx`): architecture, multi-repo setup, progress/ETA, configurable LLM classifier on Jev's schema, milestones
 
 ## Design pages
