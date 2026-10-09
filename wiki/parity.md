@@ -111,4 +111,4 @@ harness recomputes the expected value from the golden constituents with the spec
 
 | Freeze | Result |
 |---|---|
-| 2026-10-09 | Re-running the prototype at pinned SHAs reproduced every git-derived series of the previous run (2026-09-13) exactly for all months before the last two. Security re-frozen from raw scanner output. PR/MR flow frozen for two of three projects; the third needs network access to its self-hosted GitLab. Snapshot metrics (duplication, complexity, SAST, secrets) and the Velocity golden set are still pending |
+| 2026-10-09 | Re-running the prototype at pinned SHAs reproduced every git-derived series of the previous run (2026-09-13) exactly for all months before the last two. Security re-frozen from raw scanner output. PR/MR flow frozen for all three projects; every PR series matched the previous run except mentoring pairs. Snapshot metrics (duplication, complexity, SAST, secrets) and the Velocity golden set are still pending |
