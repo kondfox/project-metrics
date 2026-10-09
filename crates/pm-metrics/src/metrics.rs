@@ -7,6 +7,7 @@ use pm_classify::Role;
 use serde::{Deserialize, Serialize};
 
 use crate::day::{Day, Days, Group, aggregate};
+use crate::snapshot::SnapshotPoint;
 use crate::stats::{entropy_norm, median, pct, percentile};
 
 /// A role or technology counts for a person from this many added lines (spec §5).
@@ -156,7 +157,9 @@ fn combined(agg: &Day) -> Group {
     g
 }
 
-pub fn metrics(agg: &Day, opts: &MetricOptions) -> Metrics {
+/// `snapshot` is the snapshot at the range's end (spec §1.1: a range shows the snapshot value at its
+/// end); its metrics are added and duplication joins Quality.
+pub fn metrics(agg: &Day, opts: &MetricOptions, snapshot: Option<&SnapshotPoint>) -> Metrics {
     let mut m = Metrics::default();
     let all = combined(agg);
     let commits = all.commits as u64;
@@ -214,11 +217,19 @@ pub fn metrics(agg: &Day, opts: &MetricOptions) -> Metrics {
         m.put("ai_assist_line_pct", pct(agg.ai.added, all.added), Some(all.added));
     }
 
-    let subs = [rework.map(s_rework), tests.map(s_tests), docs.map(s_docs)];
+    if let Some(sp) = snapshot {
+        for (id, v) in &sp.values {
+            m.values.insert(id.clone(), *v);
+        }
+        for (id, n) in &sp.n {
+            m.n.insert(id.clone(), *n);
+        }
+    }
+    let s_dup = snapshot.and_then(|sp| sp.values.get("s_dup").copied().flatten());
+    let subs = [rework.map(s_rework), tests.map(s_tests), docs.map(s_docs), s_dup];
     m.put("s_rework", subs[0], Some(agg.rework_added));
     m.put("s_tests", subs[1], prod);
     m.put("s_docs", subs[2], prod);
-    // Duplication (s_dup) is a snapshot metric (M3); until then Quality has at most 3 of 4.
     let present = subs.iter().flatten().count() as u64;
     m.put("quality", quality(&subs), None);
     m.put("quality_constituents", Some(present as f64), None);
@@ -327,7 +338,7 @@ mod tests {
             ai_attribution: true,
             mix_roles: vec![Role::Backend],
         };
-        let m = metrics(&Day::default(), &opts);
+        let m = metrics(&Day::default(), &opts, None);
         assert_eq!(m.values["commits"], Some(0.0));
         for id in [
             "rework_pct",

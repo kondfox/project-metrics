@@ -207,11 +207,20 @@ Same, with doc files. `s_docs = 100·min(1, x/40)`.
 pooled. Ignore `node_modules dist build .next out coverage vendor Pods .gradle .git generated
 __generated__ .venv venv __pycache__ .turbo bin obj`, `*.min.js *.map *.lock *-lock.json *.snap *.svg`
 and the repo's `.gitignore`. `s_dup = 100·clamp((15 − x)/12, 0, 1)` (3% → 100, 15% → 0).
-Snapshot trees are materialized via throwaway `git worktree`/`git archive` — never touch the working copy.
+Snapshot trees are materialized with `git archive` into a temporary folder (decided 2026-10-09, M3:
+not `git worktree`, which writes into the repo's `.git`); the repo is only read.
+
+**Snapshot commits and pooling (decided 2026-10-09, M3).** A snapshot on date D measures, per repo, the
+last commit committed before D + 1 at 00:00 UTC (`git rev-list -1 --before`), so it doesn't depend on
+the time of day of the run. **⟂ fix vs prototype:** a bare `--before=<date>` used the run's time of day,
+which took commits from the morning of the 1st. Repos with no commit yet on D are left out. A pooled
+snapshot metric is measured only if every repo that exists on D has it; one failed or missing
+measurement makes it "not measured" rather than a partial pool. `[snapshots] cadence = "monthly"` keeps
+only month-ends; `since` limits how far back trees are scanned.
 
 ### 3.5 Trend-only companions (not in the score)
-- **Complexity / KLOC** — `scc`: Σ cyclomatic complexity ÷ code lines × 1000, per snapshot (week-end/month-end), pooled. Within-project trend only (stack-dependent).
-- **Hotspots** — per file `revisions × complexity` (revisions = commits touching the file in the last 12 months; complexity from `scc --by-file`); top-N per repo, ranked within repo only. Same excludes as duplication.
+- **Complexity / KLOC** — `scc` (all languages, with the duplication folder excludes): Σ cyclomatic complexity ÷ code lines × 1000, per snapshot (week-end/month-end), pooled. Within-project trend only (stack-dependent).
+- **Hotspots** — per file `revisions × complexity` (revisions = non-merge commits touching the file in the 365 days up to `as_of`, by author date, any author; binary changes don't count; complexity from `scc --by-file` at the as-of commit); top 15 per repo, ranked within repo only. Same excludes as duplication.
 
 ---
 
@@ -271,8 +280,13 @@ Mentoring pairs (PR-based) are in §7.
 ## 7. Security (fleet headline) — [security-index.md](security-index.md), internal notes (not published)
 
 ### 7.1 Dependency vulnerabilities
-- For each configured lockfile, take its content **at the branch tip** (`git show <branch>:<lockfile>`;
-  week-end/month-end SHA for the trend) and run `osv-scanner scan source --lockfile <f> --format json`.
+- For each lockfile (configured with `security_lockfiles`, else every lockfile osv-scanner understands,
+  found outside dependency and build folders), take its content **at the snapshot commit** (`git show
+  <sha>:<lockfile>`) and run `osv-scanner scan source --lockfile <f> --format json`, writing the content
+  under the lockfile's own name (it tells osv-scanner the format).
+- **The vulnerability database changes daily**, so a result is reused only on the day it was scanned
+  (keyed by lockfile content, scanner version and day); identical lockfiles across snapshots are scanned
+  once a day. Never carry a result over from another day (parity.md §6).
 - Severity per advisory: `database_specific.severity` if present, else from the group's CVSS
   `max_severity`: ≥9 critical, ≥7 high, ≥4 moderate, >0 low, missing → unknown. `MEDIUM` ≡ moderate.
 - Count **distinct (repo, advisory id)** at its highest severity; pool across repos.
@@ -286,6 +300,10 @@ Mentoring pairs (PR-based) are in §7.
   kubernetes-secret npm-access-token digitalocean- heroku- hashicorp- jfrog- doppler- postman-` **and**
   the file is not a test path or noise path (`docs/`, `prd/`, `*.md`, `README`, `*.example`, `*.sample`,
   `sample*`/`example*`). Everything else is low (trend only).
+- **Security test path** (§7.2, §7.4): a path the test rules of §1.4 match, or with a `test`, `tests`,
+  `__tests__`, `spec`, `e2e`, `fixture(s)`, `mock(s)` or `seed` folder, or a `.test.`/`.spec.` file name.
+  **⟂ change vs prototype:** it used only the folder/file-name part, so e.g. Go `_test.go` findings
+  counted.
 - A hit matching a triage entry (`repo + file [+ rule]`) does not count.
 - Secret values are never stored.
 
@@ -300,10 +318,14 @@ Flagged `~` (point-in-time; no remediation-age data). Coverage is a lower bound 
 scannable lockfile.
 
 ### 7.4 Own-code SAST (project dashboard, trend only — never ranked)
-- `semgrep scan --metrics=off --json` with a **pinned local ruleset snapshot** (licence-compatible rules only, e.g. the LGPL Opengrep fork, not the Semgrep registry; ship the rules with the
-  tool; record the snapshot date) on each snapshot tree.
+- `semgrep scan --metrics=off --json` with a **pinned local ruleset** on each snapshot tree. The rules are
+  configured per project (`[snapshots] sast_rules`, files or folders of YAML); without rules SAST is "not
+  measured". **Open (2026-10-09, M3):** no bundled default yet. The Semgrep registry rules can't be
+  redistributed, and the Opengrep rules fork turned out to be LGPL-2.1 **with the Commons Clause** (no
+  selling), which isn't open source either (plan §9).
 - Findings in non-test paths, bucketed `ERROR/HIGH/CRITICAL → high`, `WARNING/MEDIUM → medium`,
-  `INFO/LOW → low`. Also: findings per KLOC; **new / fixed** vs the previous snapshot of the same cadence keyed by the multiset of
+  `INFO/LOW → low`. Also: findings per KLOC (whole-tree `scc` code lines, in KLOC to 0.1 per repo:
+  `sast_kloc`); **new / fixed** (`null` for the first snapshot of a series) vs the previous snapshot of the same cadence keyed by the multiset of
   `(repo, rule, file)`; **suppression markers** count (`nosemgrep`, `# nosec`, `NOSONAR`,
   `gitleaks:allow`, security `eslint-disable`, `@SuppressWarnings("squid…`).
 - Reuse the previous snapshot's result when a repo's SHA is unchanged.
@@ -366,6 +388,7 @@ setup commands: [tool-implementation-plan.md §3](tool-implementation-plan.md#3-
 | `[code_host]` `type`, `base`, `token_env` | Tokens only by env-var name, never inline |
 | `[fte]` | FTE provider (§10.2): `source = "static"` with `value` or dated `periods = [{from, to?, fte}]`, or `source = "file"` with `file` (the JSON below) |
 | `[[secrets_triage]]` | `repo, file, rule?, verdict (false-positive · rotated · accepted), by, date` |
+| `[snapshots]` | `cadence` (`weekly` · `monthly`), `sast_rules` (semgrep rule files or folders), `since` (first date to scan), `jobs` (trees scanned at once, default 2), `enabled` |
 | `[classifiers.<name>]`, `[velocity] classifier` | LLM classifiers (§10.3) |
 
 ### 10.2 FTE provider (external source, stub in v1)
@@ -417,20 +440,26 @@ schema for every provider. Design: [tool-implementation-plan.md §6](tool-implem
 | Tool | Used for | Version | If missing |
 |---|---|---|---|
 | git | everything | ≥ 2.30 | fatal |
-| scc | complexity/KLOC, hotspots, KLOC for SAST density | any | §3.5 null |
-| jscpd | duplication | `jscpd@4` via npx | `s_dup` dropped from Quality |
-| osv-scanner | dependency vulns | v2 (`scan source`) | Security score without deps (flag) |
-| gitleaks | secrets | v8 (`dir`, `git`) | secrets gate off (flag) |
-| semgrep | own-code SAST | OSS CLI + bundled rules snapshot | SAST panels null |
+| scc | complexity/KLOC, hotspots, KLOC for SAST density | 4.1.0 | §3.5 null |
+| jscpd | duplication | 4.3.0 via `npx` | `s_dup` dropped from Quality |
+| osv-scanner | dependency vulns | 2.5.1 (`scan source`) | Security score not measured |
+| gitleaks | secrets | 8.30.1 (`dir`) | secrets gate off, secrets not measured |
+| semgrep | own-code SAST | 1.179.0 + configured rules | SAST panels "not measured" |
+
+Versions are the ones results are pinned to (decided 2026-10-09, M3). Other versions run, with a warning
+that counts may differ from other machines; `meta.tool_versions` records what ran. `pmx tools install`
+installs the pinned scc, osv-scanner and gitleaks, verified against SHA-256 digests compiled into pmx;
+`pmx doctor` shows what is missing.
 
 Every metric with a missing input renders as **"not measured"** and Quality/Security show which
 constituents fed them.
 
 ### 10.6 Output data model (per project, one JSON)
-`days{date → components}` (the stored truth, sparse); `snapshots{sha-dated week-end/month-end →
-snapshot metrics}`; `weeks[]`, `months[]` with precomputed `series_weekly` / `series_monthly
+`days{date → components}` (the stored truth, sparse); `snapshots{date → {values, n, repos{repo →
+sha}}}` for every week-end, month-end and the as-of date (a range shows the latest snapshot on or before
+its end); `weeks[]`, `months[]` with precomputed `series_weekly` / `series_monthly
 {metric → [value|null]}` plus `n` (denominators) for the low-n flag; `detail{week|month → stack_mix,
-leaders}`; `ai_compare`; `security{snapshot}`; `hotspots[]`; `velocity{packages[] scored, with date}`;
+leaders}`; `ai_compare`; `security{date, top_packages, lockfiles}`; `hotspots[{repo, sha, since, files[]}]`; `velocity{packages[] scored, with date}`;
 `meta{generated_at, as_of, repo tip SHAs, partial_week, partial_month, tool versions, rules snapshot,
 rubric version, classifier per package, constituents present}`. Per-person drill-downs (leaders, per-person
 points) go to a separate `private/leads.json`, never into the shared file. The per-person day components
@@ -458,3 +487,9 @@ Values are unrounded; `null` means no data.
 | `multi_stack_pct`, `breadth_index`, `techs_per_dev` | §5 over the bucket | people with lines in breadth roles |
 | `ai_assist_commit_pct`, `ai_assist_line_pct` | §6; absent when `ai_attribution = false` | commits · added source lines |
 | `ai_compare_<ai\|human>_<commits\|added\|med_size\|test_pct\|doc_pct>` | §6, period `last-12m` | — |
+| `dup_pct`, `s_dup` | §3.4, at the bucket's end | scanned lines |
+| `cx_per_kloc`, `kloc` | §3.5 | code lines |
+| `vuln_critical`, `vuln_high`, `vuln_moderate`, `vuln_low`, `vuln_advisories`, `vuln_packages`, `vuln_total_packages` | §7.1 | — |
+| `secrets_high`, `secrets_low` | §7.2 | — |
+| `security_score` | §7.3 | — |
+| `sast_high`, `sast_medium`, `sast_low`, `sast_new`, `sast_fixed`, `sast_per_kloc`, `sast_kloc`, `suppressions` | §7.4 | — |

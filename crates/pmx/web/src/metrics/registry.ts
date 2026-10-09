@@ -105,6 +105,66 @@ export const METRICS = {
     spec: "§6",
   },
   ai_assist_line_pct: { label: "AI-assisted lines", unit: "percent", nCounts: "added lines", spec: "§6" },
+  dup_pct: {
+    label: "Duplication",
+    unit: "percent",
+    decimals: 2,
+    description: "duplicated lines (jscpd, ≥ 5 lines / 50 tokens); 3% → score 100, 15% → 0",
+    spec: "§3.4",
+  },
+  s_dup: { label: "Duplication score", unit: "score", spec: "§3.4" },
+  cx_per_kloc: {
+    label: "Complexity / KLOC",
+    unit: "ratio",
+    decimals: 1,
+    description: "cyclomatic complexity per 1,000 code lines",
+    spec: "§3.5",
+  },
+  kloc: {
+    label: "Code size",
+    unit: "ratio",
+    decimals: 1,
+    description: "KLOC (scc, generated folders excluded)",
+    spec: "§3.5",
+  },
+  security_score: {
+    label: "Security",
+    unit: "score",
+    description: "dependency advisories by severity; an open critical or a live secret caps it at 40",
+    spec: "§7.3",
+  },
+  vuln_critical: { label: "Critical", unit: "count", spec: "§7.1" },
+  vuln_high: { label: "High", unit: "count", spec: "§7.1" },
+  vuln_moderate: { label: "Moderate", unit: "count", spec: "§7.1" },
+  vuln_low: { label: "Low", unit: "count", spec: "§7.1" },
+  vuln_advisories: { label: "Advisories", unit: "count", description: "distinct per repo", spec: "§7.1" },
+  vuln_packages: { label: "Vulnerable packages", unit: "count", spec: "§7.1" },
+  vuln_total_packages: { label: "Packages scanned", unit: "count", spec: "§7.1" },
+  secrets_high: {
+    label: "Live secrets",
+    unit: "count",
+    description: "key material or provider tokens in the tree, outside tests, docs and triage",
+    spec: "§7.2",
+  },
+  secrets_low: { label: "Low-confidence secret hits", unit: "count", spec: "§7.2" },
+  sast_high: {
+    label: "SAST high",
+    unit: "count",
+    description: "own-code findings outside tests",
+    spec: "§7.4",
+  },
+  sast_medium: { label: "SAST medium", unit: "count", spec: "§7.4" },
+  sast_low: { label: "SAST low", unit: "count", spec: "§7.4" },
+  sast_new: { label: "New findings", unit: "count", spec: "§7.4" },
+  sast_fixed: { label: "Fixed findings", unit: "count", spec: "§7.4" },
+  sast_per_kloc: { label: "SAST per KLOC", unit: "ratio", decimals: 3, spec: "§7.4" },
+  sast_kloc: { label: "KLOC scanned", unit: "ratio", decimals: 1, spec: "§7.4" },
+  suppressions: {
+    label: "Suppression markers",
+    unit: "count",
+    description: "nosemgrep, nosec, NOSONAR, …",
+    spec: "§7.4",
+  },
 } as const satisfies Record<string, MetricDef>;
 
 export type MetricId = keyof typeof METRICS | `mix_${Role}`;
@@ -129,12 +189,26 @@ export function metricDef(id: MetricId): MetricDef {
   return METRICS[id as keyof typeof METRICS];
 }
 
-/** Inputs this version can't measure yet, with what they need. */
+/**
+ * Inputs a run may not measure: milestones not built yet, or tools missing on the machine that
+ * collected (`meta.not_measured`, written by pmx).
+ */
 export const NOT_MEASURED = {
   velocity: { label: "Velocity", needs: "the LLM classifier (M5)" },
-  security: { label: "Security", needs: "osv-scanner and gitleaks snapshots (M3)" },
   peer_review: { label: "Peer review", needs: "code-host data (M4)" },
-  duplication: { label: "Duplication", needs: "jscpd snapshots (M3)" },
+  duplication: { label: "Duplication", needs: "jscpd (Node): see `pmx doctor`" },
+  complexity: { label: "Complexity", needs: "scc: `pmx tools install`" },
+  hotspots: { label: "Hotspots", needs: "scc: `pmx tools install`" },
+  dependency_vulnerabilities: { label: "Security", needs: "osv-scanner: `pmx tools install`" },
+  secrets: { label: "Live secrets", needs: "gitleaks: `pmx tools install`" },
+  sast: { label: "SAST", needs: "semgrep and `[snapshots] sast_rules`: see `pmx doctor`" },
 } as const;
 
 export type NotMeasuredId = keyof typeof NOT_MEASURED;
+
+/** Inputs that are always missing in this version (later milestones). */
+const NOT_BUILT: readonly NotMeasuredId[] = ["velocity", "peer_review"];
+
+export function isMeasured(notMeasured: readonly string[], id: NotMeasuredId): boolean {
+  return !NOT_BUILT.includes(id) && !notMeasured.includes(id);
+}

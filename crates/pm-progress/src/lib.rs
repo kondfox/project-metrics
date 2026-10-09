@@ -78,6 +78,8 @@ pub struct Stage {
     pub estimated: bool,
     pub status: Status,
     pub detail: String,
+    /// Units processed at the same time in this stage, if not the run's worker count.
+    pub workers: Option<usize>,
     started: Option<Instant>,
     elapsed: Option<Duration>,
 }
@@ -161,9 +163,15 @@ impl Progress {
             estimated: false,
             status: Status::Pending,
             detail: String::new(),
+            workers: None,
             started: None,
             elapsed: None,
         });
+    }
+
+    /// This stage runs `n` units at a time (e.g. bounded snapshot scans).
+    pub fn set_stage_workers(&self, id: &str, n: usize) {
+        self.with_stage(id, |s| s.workers = Some(n.max(1)));
     }
 
     /// Set the work of a stage (before or while it runs).
@@ -411,7 +419,7 @@ fn remaining(s: &Stage, workers: usize, live: bool) -> f64 {
         return 0.0;
     }
     let left = s.total.saturating_sub(s.done) as f64;
-    let prior = s.prior_cost / workers.max(1) as f64;
+    let prior = s.prior_cost / s.workers.unwrap_or(workers).max(1) as f64;
     let el = s.elapsed().as_secs_f64();
     let cost = if live && s.status == Status::Running && s.done > 0 && el >= 1.0 && s.total > 0 {
         let w = (s.done as f64 / s.total as f64).min(1.0);
@@ -586,6 +594,7 @@ mod tests {
             estimated: false,
             status,
             detail: String::new(),
+            workers: None,
             started: None,
             elapsed: None,
         }

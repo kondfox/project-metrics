@@ -147,7 +147,15 @@ fn setup_flow() {
 
     let events = ok(
         &ws,
-        &["collect", "--no-fetch", "--as-of", "2025-03-31", "--progress", "json"],
+        &[
+            "collect",
+            "--no-fetch",
+            "--no-snapshots",
+            "--as-of",
+            "2025-03-31",
+            "--progress",
+            "json",
+        ],
     );
     let events: Vec<serde_json::Value> = events.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
     assert_eq!(events.first().unwrap()["event"], "plan");

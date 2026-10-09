@@ -159,6 +159,7 @@ pub fn from_prototype(cfg: &Value, side: &SideFiles) -> Result<Imported, ConfigE
         people,
         fte,
         secrets_triage: import_triage(side.secrets_triage, &repo_names, &mut notes),
+        snapshots: Default::default(),
         classifiers: BTreeMap::new(),
         velocity: None,
     };

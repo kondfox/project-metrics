@@ -18,6 +18,11 @@ use sha2::{Digest, Sha256};
 
 use crate::cache::Cache;
 use crate::ingest::{IngestContext, RepoIngest, add_rework, ingest, splice_rework};
+use crate::snapshots::{SNAPSHOTS, SnapshotRepo, SnapshotSettings, run_stage};
+
+fn snapshots_enabled(ws: &Workspace, opts: &CollectOptions) -> bool {
+    opts.snapshots && ws.config.snapshots.enabled != Some(false)
+}
 
 /// Lines deleted within this many days of being added are rework (spec §3.1).
 pub const REWORK_YOUNG_DAYS: i64 = 21;
@@ -28,7 +33,7 @@ pub const REWORK: &str = "rework";
 
 /// Seconds per unit before any run has been timed (one worker; measured on an Apple M-series
 /// laptop, generous on purpose).
-const DEFAULT_COST: [(&str, f64); 3] = [(FETCH, 2.0), (INGEST, 0.001), (REWORK, 0.0015)];
+const DEFAULT_COST: [(&str, f64); 4] = [(FETCH, 2.0), (INGEST, 0.001), (REWORK, 0.0015), (SNAPSHOTS, 20.0)];
 
 #[derive(Clone)]
 pub struct CollectOptions {
@@ -42,6 +47,12 @@ pub struct CollectOptions {
     /// Read git and detect tests the way the private prototype did. For the parity harness only
     /// (parity.md); never set by the CLI.
     pub prototype_compat: bool,
+    /// Run the snapshot stage (unless `[snapshots] enabled = false`).
+    pub snapshots: bool,
+    /// The external tools; `None` = detect them.
+    pub tools: Option<pm_snapshot::Tools>,
+    /// Replay recorded osv-scanner output (see `snapshots::SnapshotSettings::osv_replay`).
+    pub osv_replay: Option<std::path::PathBuf>,
     pub progress: Progress,
 }
 
@@ -53,6 +64,9 @@ impl CollectOptions {
             use_cache: true,
             incremental: true,
             prototype_compat: false,
+            snapshots: true,
+            tools: None,
+            osv_replay: None,
             progress: Progress::off(),
         }
     }
@@ -290,6 +304,10 @@ pub fn plan_progress(ws: &Workspace, opts: &CollectOptions, plans: &[RepoPlan]) 
     p.add_stage(FETCH, "fetch", "repos", cost(FETCH)?);
     p.add_stage(INGEST, "git ingest", "commits", cost(INGEST)?);
     p.add_stage(REWORK, "rework walk", "commits", cost(REWORK)?);
+    p.add_stage(SNAPSHOTS, "snapshots", "trees", cost(SNAPSHOTS)?);
+    if !snapshots_enabled(ws, opts) {
+        p.skip(SNAPSHOTS, "off");
+    }
     let fetches = plans.iter().filter(|r| r.needs_fetch).count() as u64;
     if fetches == 0 {
         p.skip(FETCH, "skipped (--no-fetch or pinned revs)");
@@ -561,9 +579,60 @@ pub fn collect(ws: &Workspace, opts: &CollectOptions) -> Result<Collected> {
         repos.push(r.info);
     }
 
+    let snapshots = if snapshots_enabled(ws, opts) {
+        let tools = opts.tools.clone().unwrap_or_else(crate::detect_tools);
+        for id in pm_snapshot::ToolId::ALL {
+            match tools.get(id) {
+                Some(t) if !t.is_pinned_version() => p.warn(format!(
+                    "{} {} (pinned {}): counts may differ from other machines",
+                    id.name(),
+                    t.version,
+                    id.pinned()
+                )),
+                Some(_) => {}
+                None => p.warn(format!("{} not installed: {} not measured", id.name(), id.used_for())),
+            }
+        }
+        let snap_repos: Vec<SnapshotRepo> = config
+            .repos
+            .iter()
+            .zip(&plans)
+            .filter_map(|(r, pl)| {
+                Some(SnapshotRepo {
+                    name: pl.name.clone(),
+                    dir: pl.dir.clone(),
+                    tip: pl.tip.clone()?,
+                    lockfiles: r.security_lockfiles.clone(),
+                })
+            })
+            .collect();
+        let settings = SnapshotSettings {
+            ws,
+            as_of: opts.as_of,
+            tools: &tools,
+            dialect: opts.dialect(),
+            classifier: (!opts.prototype_compat).then(|| shared.classifier.clone()),
+            use_cache: opts.use_cache,
+            osv_replay: opts.osv_replay.clone(),
+            progress: p.clone(),
+        };
+        let cadence = config.snapshots.cadence.unwrap_or_default();
+        let input = run_stage(&settings, &snap_repos, cadence, config.snapshots.jobs.unwrap_or(2))?;
+        Some((input, tools))
+    } else {
+        None
+    };
+
     let mut tool_versions = BTreeMap::new();
     tool_versions.insert("pmx".to_string(), env!("CARGO_PKG_VERSION").to_string());
     tool_versions.insert("git".to_string(), Git::version()?);
+    if let Some((_, tools)) = &snapshots {
+        for id in pm_snapshot::ToolId::ALL {
+            if let Some(t) = tools.get(id) {
+                tool_versions.insert(id.name().into(), t.version.clone());
+            }
+        }
+    }
     let (project, leads) = pm_metrics::build(BuildInput {
         project: ProjectInfo {
             name: config.project.name.clone(),
@@ -582,6 +651,7 @@ pub fn collect(ws: &Workspace, opts: &CollectOptions) -> Result<Collected> {
         } else {
             "spec".into()
         },
+        snapshots: snapshots.map(|(input, _)| input).unwrap_or_default(),
     });
     Ok(Collected {
         project,

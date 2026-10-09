@@ -35,6 +35,17 @@ impl Cache {
                 data TEXT NOT NULL,
                 PRIMARY KEY (repo, stage, settings)
              );
+             CREATE TABLE IF NOT EXISTS snapshot_tool (
+                repo TEXT NOT NULL,
+                sha TEXT NOT NULL,
+                tool TEXT NOT NULL,
+                data TEXT NOT NULL,
+                PRIMARY KEY (repo, sha, tool)
+             );
+             CREATE TABLE IF NOT EXISTS osv_scan (
+                key TEXT PRIMARY KEY,
+                data TEXT NOT NULL
+             );
              CREATE TABLE IF NOT EXISTS timing (
                 stage TEXT NOT NULL,
                 units INTEGER NOT NULL,
@@ -62,6 +73,45 @@ impl Cache {
         self.db.execute(
             "INSERT OR REPLACE INTO stage_result (repo, stage, settings, sha, data) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![repo, stage, settings, sha, serde_json::to_string(value)?],
+        )?;
+        Ok(())
+    }
+
+    /// One tool's raw result on one commit. `tool` includes the tool version and options, so a new
+    /// version or ruleset is a miss.
+    pub fn tool_result<T: DeserializeOwned>(&self, repo: &str, sha: &str, tool: &str) -> Result<Option<T>> {
+        let data: Option<String> = self
+            .db
+            .query_row(
+                "SELECT data FROM snapshot_tool WHERE repo = ?1 AND sha = ?2 AND tool = ?3",
+                params![repo, sha, tool],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(data.and_then(|d| serde_json::from_str(&d).ok()))
+    }
+
+    pub fn put_tool_result<T: Serialize>(&self, repo: &str, sha: &str, tool: &str, value: &T) -> Result<()> {
+        self.db.execute(
+            "INSERT OR REPLACE INTO snapshot_tool (repo, sha, tool, data) VALUES (?1, ?2, ?3, ?4)",
+            params![repo, sha, tool, serde_json::to_string(value)?],
+        )?;
+        Ok(())
+    }
+
+    /// Raw osv-scanner output by key (lockfile blob, name, scanner version and scan day: the
+    /// vulnerability database changes daily, so results are never carried over to another day).
+    pub fn osv(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row("SELECT data FROM osv_scan WHERE key = ?1", params![key], |r| r.get(0))
+            .optional()?)
+    }
+
+    pub fn put_osv(&self, key: &str, raw: &str) -> Result<()> {
+        self.db.execute(
+            "INSERT OR REPLACE INTO osv_scan (key, data) VALUES (?1, ?2)",
+            params![key, raw],
         )?;
         Ok(())
     }

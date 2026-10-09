@@ -1,6 +1,6 @@
 import { MetricTile } from "../components/tiles/MetricTile";
 import { NotMeasuredTile } from "../components/tiles/NotMeasuredTile";
-import { QualityTile } from "../components/tiles/ScoreTile";
+import { QualityTile, SecurityTile } from "../components/tiles/ScoreTile";
 import { Tile, TileGrid } from "../components/tiles/Tile";
 import { Section } from "../components/ui/Section";
 import { formatNumber, formatPercent } from "../lib/format";
@@ -30,7 +30,7 @@ export function HeadlineSection() {
           />
         )}
         <NotMeasuredTile id="velocity" />
-        <NotMeasuredTile id="security" />
+        <SecurityTile />
         <NotMeasuredTile id="peer_review" />
       </TileGrid>
     </Section>

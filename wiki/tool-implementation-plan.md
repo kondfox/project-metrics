@@ -1,8 +1,10 @@
 # Portable metrics tool — implementation plan
 
-**Status:** M1 and M2 built (2026-10-09): the git-derived core reproduces the prototype (M1a, see
+**Status:** M1–M3 built (2026-10-09): the git-derived core reproduces the prototype (M1a, see
 [parity.md](parity.md) §6), a workspace can be set up, collected incrementally and resumed from the CLI
-(M1b), and one project is viewable end to end in the dashboard (M2). M3 (snapshots) is next. Drafted 2026-10-08, revised 2026-10-09 with owner decisions.
+(M1b), one project is viewable end to end in the dashboard (M2), and the snapshot metrics (duplication,
+complexity, dependency vulnerabilities, secrets, SAST, hotspots, the Security score) reproduce the
+prototype (M3). M4 (code host) is next. Drafted 2026-10-08, revised 2026-10-09 with owner decisions.
 **What** to measure is defined by [metrics-spec.md](metrics-spec.md) (source of truth). This page covers
 **how** to build the tool, which runs anywhere and shows its results in a web dashboard. Where this page
 changes the spec, it says so with **⟂ spec change**. The spec must be updated to match before M1.
@@ -37,6 +39,9 @@ in the browser. A second command combines several projects into the **fleet view
 | D15 | **WASM engine:** `pm-wasm` exposes pm-metrics over a raw C ABI with JSON in and out (no wasm-bindgen). `pmx`'s build script compiles it for `wasm32-unknown-unknown`; without that target pmx still builds, and the dashboard falls back to whole weeks and months | 2026-10-09 |
 | D16 | **Bit-identical floats everywhere:** pm-metrics uses the pure-Rust `libm` for `ln`/`exp` (entropy, Quality geomean), so native builds on any OS and the WASM engine agree to the last bit. A test checks every week and month of a fixture through the WASM module | 2026-10-09 |
 | D17 | **One self-contained page:** data, ECharts and the WASM engine are inlined into one HTML file, so it works from `pmx serve`, as a shared file, and opened from disk. `pmx serve` binds to 127.0.0.1 only and includes the private lead view; `pmx export --format html` leaves it out unless `--with-private` (written under `out/private/`) | 2026-10-09 |
+| D21 | **Snapshot stage** (`pm-snapshot` crate): trees via `git archive`; raw tool results cached per (repo, commit, tool version + options), so installing a tool or changing rules only runs that tool; classification (test paths, triage) applied after the cache. osv-scanner results are keyed by lockfile content and **day**. Scans run on a bounded pool (`[snapshots] jobs`, default 2) | 2026-10-09 |
+| D22 | **`pmx tools install`** downloads the pinned scc, osv-scanner and gitleaks from their GitHub releases into the user cache (`PMX_TOOLS_DIR` overrides) and refuses any download whose SHA-256 differs from the digest compiled into pmx. semgrep and jscpd stay user-installed (`pmx doctor` says how) | 2026-10-09 |
+| D23 | **No bundled SAST rules yet.** Rules are configured per project (`[snapshots] sast_rules`). The Opengrep rules fork is LGPL-2.1 + Commons Clause, so it can't be the bundled default either (§9) | 2026-10-09 |
 | D10 | The parity harness is a workspace crate (`pmx-parity`, not published) that reads the golden set from `PMX_GOLDEN_DIR` and prints to the terminal only. It runs twice: in the **prototype dialect** (the prototype's test rules and git reading) every M1 series must match exactly; in the spec dialect the intentional differences are reported | 2026-10-09 |
 
 ---
@@ -62,7 +67,7 @@ pmx fleet serve|export --manifest fleet.toml ──► fleet.json + fleet dashbo
 | `pm-config` | Load and validate `pmx.toml`; `[people]` identity, bots, externals (spec §1.3); FTE provider (spec §10.2); JSON-config importer |
 | `pm-classify` | File class, test detection, stack role, technology (spec §1.4–1.5). Pure functions, table-driven tests |
 | `pm-git` | Streaming parsers for `git log --numstat` and the rework walk (`log -p -w`); snapshot trees via `git worktree`/`archive`; fetch |
-| `pm-snapshot` | Runs and parses the external tools; results cached by `(tool, tool version, sha)` |
+| `pm-snapshot` | Finds, runs and parses the external tools (pure parsers, tested on sample output); turns raw results into per-repo summaries (D21) |
 | `pm-codehost` | GitHub and GitLab adapters behind `merged_prs()` (spec §10.4) |
 | `pm-llm` | The classifier: the shared schema (§6.1), providers, data-policy guard, cache, eval harness |
 | `pm-metrics` | Roll-ups, ratios, scores (Quality, Security, Velocity, multi-stack). No I/O. **Also compiled to WASM** for the dashboard |
@@ -438,7 +443,7 @@ derived from schema answers. The rubric version bump (`six-axis@2`) invalidates 
 | **M1a** ✓ 2026-10-09 | `pm-config` (incl. the prototype-config conversion), `pm-classify`, `pm-git`, `pm-metrics`; `pmx collect` (fetch, git ingest, rework walk, per-repo cache) and `pmx export --format long`; activity, rework, tests/docs, multi-stack and AI metrics, weekly and monthly; `project.json` + `private/leads.json`; `pmx-parity` | Matches the golden files except the listed ⟂ differences. **Done:** exact in the prototype dialect for all three projects |
 | **M1b** ✓ 2026-10-09 | `init`, `repo`, `people`, `check`, `import-config` (CLI over the M1a converter, plus `fte.json` and `secrets_triage.json`); the progress, resume and ETA framework (§5), incl. incremental ingest from the last processed SHA | A new workspace set up from scratch without hand-editing TOML; Ctrl-C and resume lose at most the units in flight. **Done:** `crates/pmx/tests/cli.rs` runs init → people → repo → check → collect → export; `tests/incremental.rs` checks incremental, resumed and rewritten-history runs against full runs |
 | **M2** ✓ 2026-10-09 | Project dashboard: weekly/monthly, custom range via WASM, low-n and "not measured" states, `serve`/`export` | One project viewable end to end. **Done:** `pmx serve` / `pmx export --format html`; headline, Quality, activity, multi-stack (with the private leaders table) and AI sections; view state in the URL hash (`#monthly&2026-06-15..2026-09-30`); `tests/dashboard.rs` covers rendering, the privacy split, serving and WASM = CLI |
-| **M3** | `pm-snapshot`: scc, jscpd, osv-scanner, gitleaks, semgrep; Quality with duplication; Security score; SAST trend; `doctor`, `tools install` | Quality and Security reproduced for all three projects |
+| **M3** ✓ 2026-10-09 | `pm-snapshot`: scc, jscpd, osv-scanner, gitleaks, semgrep; Quality with duplication; Security score; SAST trend; `doctor`, `tools install` | Quality and Security reproduced for all three projects. **Done:** every snapshot series exact in the parity replay for all three projects, and in the live tool runs ([parity.md](parity.md) §6); dashboard Security and Code health sections; `tests/snapshots.rs` covers the stage with fake tools |
 | **M4** | `pm-codehost`: GitHub + GitLab; peer review, cycle time, review wait, mentoring (unified expert rule, spec §8) | Spec §8 complete |
 | **M5** | `pm-llm`: schema types, `jev`, `openai-compatible`, `anthropic` and `command` providers, data-policy guard, confidence gate, cache, `classifier eval`; Velocity on `six-axis@2` | At least one remote and one local classifier pass the eval |
 | **M6** | Local fleet: `fleet.toml`, aggregation, fleet dashboard | Fleet rebuilt from the three local project folders |
@@ -463,5 +468,8 @@ derived from schema answers. The rubric version bump (`six-axis@2`) invalidates 
 - The **tool name**.
 - **Cross-file SAST** stays an open decision, separate from this plan.
 - **Bundled SAST rules licence.** Semgrep registry rules are under the Semgrep Rules License, which restricts
-  redistribution, so they can't ship in this repo. Use the LGPL-licensed Opengrep rules fork (or rules we
-  write) for the bundled snapshot in spec §7.4.
+  redistribution, so they can't ship in this repo. The Opengrep rules fork, planned as the alternative,
+  turned out (checked 2026-10-09) to be LGPL-2.1 **plus the Commons Clause** (no selling), so it isn't open
+  source either. Options: write a small ruleset under MIT/Apache, let `pmx tools install` fetch a pinned
+  third-party snapshot onto the user's machine (the user accepts its licence; we don't redistribute), or
+  keep rules user-configured only (current state, D23). **Owner decision needed.**

@@ -127,6 +127,10 @@ fn main() {
         "CARGO_BUILD_TARGET",
         "CARGO_TARGET_DIR",
         "RUSTC_WRAPPER",
+        // Not clippy's: lints of the host build must not fail the engine build.
+        "RUSTC_WORKSPACE_WRAPPER",
+        "CLIPPY_ARGS",
+        "CLIPPY_CONF_DIR",
     ] {
         cmd.env_remove(var);
     }

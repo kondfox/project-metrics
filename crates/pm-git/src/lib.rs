@@ -322,6 +322,55 @@ impl Git {
         Ok(())
     }
 
+    /// Extract the tree at `rev` into `dest` (`git archive`: reads objects only, never touches the
+    /// repo's working copy or its `.git`).
+    pub fn archive_to(&self, rev: &str, dest: &Path) -> Result<()> {
+        let args = ["archive", "--format=tar", rev];
+        let mut child = self
+            .command()
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let mut archive = tar::Archive::new(child.stdout.take().expect("piped"));
+        archive.set_preserve_permissions(false);
+        archive.set_overwrite(true);
+        let unpacked = archive.unpack(dest);
+        let out = child.wait_with_output()?;
+        if !out.status.success() {
+            return Err(self.fail(&args, &out.stderr));
+        }
+        unpacked.map_err(GitError::Spawn)
+    }
+
+    /// The last commit on `rev` committed before `before` (UTC midnight), as `git rev-list -1
+    /// --before` finds it; `None` if the history starts later.
+    pub fn sha_before(&self, rev: &str, before: NaiveDate) -> Result<Option<String>> {
+        let bound = format!("--before={} 00:00:00 +0000", before.format("%Y-%m-%d"));
+        let out = self.run(&["rev-list", "-1", &bound, rev, "--"])?;
+        Ok(Some(out.trim().to_string()).filter(|s| !s.is_empty()))
+    }
+
+    /// Object id of `path` at `rev` (to dedupe identical lockfiles), if it exists.
+    pub fn blob_id(&self, rev: &str, path: &str) -> Option<String> {
+        self.run(&["rev-parse", "--verify", "--quiet", &format!("{rev}:{path}")])
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Contents of `path` at `rev`.
+    pub fn show_bytes(&self, rev: &str, path: &str) -> Result<Vec<u8>> {
+        let spec = format!("{rev}:{path}");
+        let args = ["show", spec.as_str()];
+        let out = self.command().args(args).stdin(Stdio::null()).output()?;
+        if !out.status.success() {
+            return Err(self.fail(&args, &out.stderr));
+        }
+        Ok(out.stdout)
+    }
+
     /// `remote.origin.url`, if any.
     pub fn remote_url(&self) -> Option<String> {
         self.run(&["config", "--get", "remote.origin.url"])

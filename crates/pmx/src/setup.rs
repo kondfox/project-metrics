@@ -325,6 +325,7 @@ pub fn new_config(name: String, range_start: NaiveDate, suggestions: &[Suggestio
         people: People::default(),
         fte: None,
         secrets_triage: Vec::new(),
+        snapshots: Default::default(),
         classifiers: BTreeMap::new(),
         velocity: None,
     };

@@ -42,3 +42,9 @@ file = "certs/dev.pem"
 verdict = "rotated"
 by = "Jane Doe"
 date = "2026-10-08"
+
+[snapshots]                       # duplication, complexity, security (spec §3.4, §7)
+cadence = "weekly"                # or "monthly" (month-ends only: fewer trees to scan)
+sast_rules = ["~/rules/semgrep"]  # semgrep rule files or folders; none → SAST "not measured"
+# since = "2026-01-01"            # don't scan trees before this date
+# jobs = 2                        # trees scanned at once

@@ -3,6 +3,12 @@
 export type { AiCompare } from "../generated/AiCompare";
 export type { Detail } from "../generated/Detail";
 export type { GroupSummary } from "../generated/GroupSummary";
+export type { Hotspot } from "../generated/Hotspot";
+export type { RepoHotspots } from "../generated/RepoHotspots";
+export type { SecurityDetail } from "../generated/SecurityDetail";
+export type { Severity } from "../generated/Severity";
+export type { SnapshotPoint } from "../generated/SnapshotPoint";
+export type { VulnPackage } from "../generated/VulnPackage";
 export type { Leader } from "../generated/Leader";
 export type { LeadsFile } from "../generated/LeadsFile";
 export type { Meta } from "../generated/Meta";

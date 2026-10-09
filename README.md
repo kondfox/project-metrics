@@ -1,9 +1,10 @@
 # project-metrics
 
-> **Status: early development.** Milestones M1–M2 are done: pmx sets up a multi-repo workspace, collects
-> the git-derived metrics (activity, rework, tests/docs-with-code, multi-stack, AI-assisted) incrementally,
-> reproduces the private prototype, and shows a project dashboard. Snapshot metrics (duplication,
-> security), PR flow and Velocity come next. The design lives in the [wiki](wiki/README.md).
+> **Status: early development.** Milestones M1–M3 are done: pmx sets up a multi-repo workspace, collects
+> the git-derived metrics (activity, rework, tests/docs-with-code, multi-stack, AI-assisted) and the
+> snapshot metrics (duplication, complexity, dependency vulnerabilities, secrets, SAST) incrementally,
+> reproduces the private prototype, and shows a project dashboard. PR flow and Velocity come next. The
+> design lives in the [wiki](wiki/README.md).
 
 ## Try it
 
@@ -21,6 +22,8 @@ pmx init ~/src/acme          # finds the clones, suggests branch + role per repo
 pmx repo set shop-legacy --role per-file   # fix a suggestion if needed
 pmx people                   # who is who across repos; --apply writes [people]
 pmx check                    # paths, branches, tokens, unmapped identities
+pmx doctor                   # which snapshot tools are installed
+pmx tools install            # pinned scc, osv-scanner, gitleaks (checksum-verified)
 pmx plan                     # what collect would do, and how long it should take
 pmx collect                  # progress + ETA; Ctrl-C and re-run to resume
 pmx serve --open             # the dashboard at http://127.0.0.1:7878 (includes the private lead view)

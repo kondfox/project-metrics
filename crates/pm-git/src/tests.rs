@@ -134,3 +134,35 @@ fn ranges_ancestry_and_setup_helpers() {
     assert_eq!(parse_version("git version 2.47.0"), Some((2, 47)));
     assert_eq!(parse_version("git version 2.39.5 (Apple Git-154)"), Some((2, 39)));
 }
+
+#[test]
+fn archive_and_month_end_lookup() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("repo");
+    std::fs::create_dir_all(&dir).unwrap();
+    git(&dir, &["init", "-q"], "2025-01-01", "x", "x@example.com");
+    write(&dir, "src/a.ts", "const a = 1;\n");
+    commit(&dir, "2025-01-20", "jan");
+    write(&dir, "src/b.ts", "const b = 2;\n");
+    commit(&dir, "2025-02-10", "feb");
+    let g = Git::open(&dir);
+    let tip = g.rev_parse("HEAD").unwrap();
+
+    let jan = g.sha_before(&tip, d("2025-02-01")).unwrap().unwrap();
+    assert_ne!(jan, tip);
+    assert_eq!(
+        g.sha_before(&tip, d("2025-03-01")).unwrap().as_deref(),
+        Some(tip.as_str())
+    );
+    assert_eq!(g.sha_before(&tip, d("2025-01-01")).unwrap(), None);
+
+    let out = tmp.path().join("tree");
+    std::fs::create_dir_all(&out).unwrap();
+    g.archive_to(&jan, &out).unwrap();
+    assert!(out.join("src/a.ts").exists());
+    assert!(!out.join("src/b.ts").exists());
+    assert!(!out.join(".git").exists());
+    assert_eq!(g.show_bytes(&tip, "src/b.ts").unwrap(), b"const b = 2;\n");
+    assert!(g.blob_id(&tip, "src/b.ts").is_some());
+    assert!(g.blob_id(&jan, "src/b.ts").is_none());
+}

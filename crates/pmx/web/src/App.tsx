@@ -5,6 +5,8 @@ import { Notices } from "./components/layout/Notices";
 import { Banner } from "./components/ui/Banner";
 import { ActivitySection } from "./sections/ActivitySection";
 import { AiSection } from "./sections/AiSection";
+import { CodeHealthSection } from "./sections/CodeHealthSection";
+import { SecuritySection } from "./sections/SecuritySection";
 import { HeadlineSection } from "./sections/HeadlineSection";
 import { MultiStackSection } from "./sections/MultiStackSection";
 import { QualitySection } from "./sections/QualitySection";
@@ -22,6 +24,8 @@ export function App() {
         <>
           <HeadlineSection />
           <QualitySection />
+          <SecuritySection />
+          <CodeHealthSection />
           <ActivitySection />
           <MultiStackSection />
           <AiSection />

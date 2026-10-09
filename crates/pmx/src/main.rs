@@ -93,7 +93,15 @@ enum Command {
         /// auto, tty, plain (a line every 10 s) or json (events on stdout).
         #[arg(long, default_value = "auto")]
         progress: String,
+        /// Skip the snapshot stage (duplication, complexity, security).
+        #[arg(long)]
+        no_snapshots: bool,
     },
+    /// Which external snapshot tools are installed, and what is not measured without them.
+    Doctor,
+    /// Install the pinned scc, osv-scanner and gitleaks (checksum-verified) into pmx's tools folder.
+    #[command(subcommand)]
+    Tools(ToolsCommand),
     /// Same as `collect --dry-run`.
     Plan {
         #[command(flatten)]
@@ -175,6 +183,15 @@ enum RepoCommand {
     },
     Remove {
         name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ToolsCommand {
+    Install {
+        /// Reinstall even if present.
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -628,6 +645,46 @@ fn cmd_collect(ws: &Workspace, mut opts: CollectOptions, mode: Mode) -> Result<(
     Ok(())
 }
 
+fn cmd_doctor(ws_dir: &Path) -> Result<()> {
+    use pm_snapshot::ToolId;
+    let git = Git::version().unwrap_or_else(|_| "not found".into());
+    println!("{} {git}", if git.starts_with("git version") { "✓" } else { "✗" });
+    let tools = pmx::detect_tools();
+    for id in ToolId::ALL {
+        match tools.get(id) {
+            Some(t) if id == ToolId::Jscpd => println!(
+                "✓ jscpd {} via npx (downloaded on first use) · {}",
+                t.version,
+                id.used_for()
+            ),
+            Some(t) if t.is_pinned_version() => println!("✓ {} {} · {}", id.name(), t.version, id.used_for()),
+            Some(t) => println!(
+                "⚠ {} {} (pinned {}: counts may differ from other machines) · {}",
+                id.name(),
+                t.version,
+                id.pinned(),
+                id.used_for()
+            ),
+            None => println!(
+                "✗ {} not found: {} not measured. Install: {}",
+                id.name(),
+                id.used_for(),
+                id.install_hint()
+            ),
+        }
+    }
+    if let Ok(ws) = Workspace::load(ws_dir) {
+        let rules = pmx::snapshots::sast_rules(&ws);
+        if rules.is_empty() {
+            println!("⚠ no SAST rules configured ([snapshots] sast_rules): SAST not measured");
+        } else {
+            println!("✓ {} SAST rule files", rules.len());
+        }
+    }
+    println!("tools folder: {}", pmx::tools_dir().join("bin").display());
+    Ok(())
+}
+
 fn run(cli: Cli) -> Result<()> {
     let ws_dir = cli.workspace;
     match cli.command {
@@ -660,11 +717,13 @@ fn run(cli: Cli) -> Result<()> {
             no_cache,
             full,
             progress,
+            no_snapshots,
         } => {
             let ws = Workspace::load(&ws_dir)?;
             let mut opts = run_options(&run);
             opts.use_cache = !no_cache;
             opts.incremental = !full;
+            opts.snapshots = !no_snapshots;
             let mode: Mode = progress.parse().map_err(anyhow::Error::msg)?;
             if dry_run {
                 cmd_plan(&ws, opts)?;
@@ -676,6 +735,14 @@ fn run(cli: Cli) -> Result<()> {
             let ws = Workspace::load(&ws_dir)?;
             let opts = run_options(&run);
             cmd_plan(&ws, opts)?;
+        }
+        Command::Doctor => cmd_doctor(&ws_dir)?,
+        Command::Tools(ToolsCommand::Install { force }) => {
+            let bin = pmx::tools_dir().join("bin");
+            for line in pmx::tools_install::install(&bin, force)? {
+                println!("✓ {line}");
+            }
+            println!("semgrep and jscpd are not installed by pmx: run `pmx doctor` for how.");
         }
         Command::Demo { dir, as_of, dev_data } => {
             let as_of = as_of.unwrap_or_else(today);

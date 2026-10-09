@@ -6,6 +6,8 @@ Plan and milestones: [wiki/tool-implementation-plan.md](wiki/tool-implementation
   `cargo test --workspace`. Tests build their own fictional git repos; CI runs exactly these. Install
   the `wasm32-unknown-unknown` target (the dashboard's engine) and Node (to check the engine against the
   CLI; CI requires it with `PMX_REQUIRE_NODE=1`).
+- **Snapshot tools** (scc, jscpd, osv-scanner, gitleaks, semgrep) are optional locally; tests use fake
+  tools (`crates/pmx/tests/snapshots.rs`). `pmx doctor` shows what you have.
 - **Dashboard:** React + TypeScript in `crates/pmx/web/`; read its [README](crates/pmx/web/README.md)
   for the layout and how to add metrics and sections. `npm run check` there must pass. Metric math
   belongs in pm-metrics, never in TypeScript, and the types in `src/generated/` come from Rust

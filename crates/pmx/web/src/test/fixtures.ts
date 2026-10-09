@@ -70,7 +70,7 @@ export function fixtureProject(over: Partial<ProjectFile["project"]> = {}): Proj
       human: { commits: 300, added: 14000, med_size: 60, test_pct: 40, doc_pct: 20 },
     },
     security: null,
-    hotspots: null,
+    hotspots: [],
     velocity: null,
     meta: {
       generated_at: "2026-10-01T00:00:00Z",
@@ -83,7 +83,14 @@ export function fixtureProject(over: Partial<ProjectFile["project"]> = {}): Proj
       tool_versions: { pmx: "0.1.0", git: "git version 2.47.0" },
       dialect: "spec",
       quality_constituents: ["rework", "tests", "docs"],
-      not_measured: ["duplication"],
+      not_measured: [
+        "duplication",
+        "complexity",
+        "hotspots",
+        "dependency_vulnerabilities",
+        "secrets",
+        "sast",
+      ],
     },
   };
 }
@@ -104,3 +111,28 @@ export const fixtureLeads: LeadsFile = {
     ],
   },
 };
+
+/** The fixture with snapshot metrics measured: an open critical caps Security at 40. */
+export function fixtureWithSnapshots(): ProjectFile {
+  const p = fixtureProject();
+  const m = (a: number | null, b: number | null) => [a, b];
+  Object.assign(p.series_monthly, {
+    security_score: m(52.1, 40),
+    vuln_critical: m(0, 2),
+    vuln_high: m(10, 12),
+    vuln_moderate: m(20, 18),
+    vuln_advisories: m(30, 32),
+    vuln_packages: m(9, 10),
+    secrets_high: m(0, 0),
+    dup_pct: m(4.2, 4.0),
+    s_dup: m(90, 91.7),
+    quality_constituents: m(4, 4),
+  });
+  p.meta.not_measured = ["sast"];
+  p.security = {
+    date: "2026-09-30",
+    top_packages: [{ name: "left-pad", version: "1.0.0", count: 3, max_severity: "critical" }],
+    lockfiles: { "shop-api": ["package-lock.json"] },
+  };
+  return p;
+}

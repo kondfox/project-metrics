@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { DashboardProvider } from "./state/DashboardProvider";
-import { fixtureLeads, fixtureProject } from "./test/fixtures";
+import { fixtureLeads, fixtureProject, fixtureWithSnapshots } from "./test/fixtures";
 
 // ECharts needs a real layout engine; the chart options are tested on their own.
 vi.mock("./components/charts/EChart", () => ({ EChart: () => <div data-testid="chart" /> }));
@@ -25,7 +25,7 @@ describe("<App>", () => {
     expect(within(quality).getByLabelText("band B")).toBeInTheDocument();
     expect(screen.getAllByRole("group", { name: "Rework" })[0]).toHaveTextContent("18.4%");
     expect(screen.getAllByRole("group", { name: "Multi-stack devs" })[0]).toHaveTextContent("low n · 4");
-    expect(screen.getByRole("group", { name: "Security" })).toHaveTextContent("not measured");
+    expect(screen.getAllByRole("group", { name: "Security" })[0]).toHaveTextContent("not measured");
     expect(window.location.hash).toBe("#weekly&2026-09-01..2026-09-30");
   });
 
@@ -48,6 +48,18 @@ describe("<App>", () => {
     renderApp();
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Range" }), "3m");
     expect(screen.getByText(/not a whole week or month/)).toBeInTheDocument();
+  });
+
+  it("shows snapshot metrics when they were measured", () => {
+    renderApp(fixtureWithSnapshots());
+    const security = screen.getAllByRole("group", { name: "Security" })[0]!;
+    expect(security).toHaveTextContent("~40");
+    expect(security).toHaveTextContent("capped at 40");
+    expect(within(security).getByLabelText("band D")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Quality" })).toHaveTextContent("4/4 constituents");
+    expect(screen.getAllByRole("group", { name: "Duplication" })[0]).toHaveTextContent("4.00%");
+    expect(screen.getAllByRole("group", { name: "SAST" })[0]).toHaveTextContent("not measured");
+    expect(screen.getByRole("table", { name: "Most vulnerable packages" })).toHaveTextContent("left-pad");
   });
 
   it("hides AI series when attribution is off", () => {

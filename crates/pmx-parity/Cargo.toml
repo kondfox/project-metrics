@@ -11,7 +11,10 @@ publish = false
 [dependencies]
 pm-classify.workspace = true
 pm-config.workspace = true
+pm-git.workspace = true
 pm-metrics.workspace = true
+pm-progress.workspace = true
+pm-snapshot.workspace = true
 pmx.workspace = true
 anyhow.workspace = true
 chrono.workspace = true

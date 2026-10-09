@@ -34,6 +34,7 @@ fn workspace(root: &Path, repo: &Path) -> Workspace {
 fn opts(cache: bool) -> CollectOptions {
     let mut o = CollectOptions::new(d("2025-04-30"));
     o.fetch = false;
+    o.snapshots = false; // covered by tests/snapshots.rs
     o.use_cache = cache;
     o
 }

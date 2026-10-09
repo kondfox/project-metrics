@@ -69,6 +69,7 @@ fn collected(root: &Path) -> Workspace {
     let ws = workspace(root);
     let mut o = CollectOptions::new(d("2025-12-31"));
     o.fetch = false;
+    o.snapshots = false; // covered by tests/snapshots.rs
     let c = collect(&ws, &o).unwrap();
     write_outputs(&ws.out_dir(), &c).unwrap();
     ws

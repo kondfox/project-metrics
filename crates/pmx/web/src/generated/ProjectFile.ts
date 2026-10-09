@@ -3,6 +3,9 @@ import type { AiCompare } from "./AiCompare";
 import type { Detail } from "./Detail";
 import type { Meta } from "./Meta";
 import type { ProjectInfo } from "./ProjectInfo";
+import type { RepoHotspots } from "./RepoHotspots";
+import type { SecurityDetail } from "./SecurityDetail";
+import type { SnapshotPoint } from "./SnapshotPoint";
 import type { JsonValue } from "./serde_json/JsonValue";
 
 export type ProjectFile = { schema: string, project: ProjectInfo, 
@@ -10,4 +13,8 @@ export type ProjectFile = { schema: string, project: ProjectInfo,
  * Sparse per-day components; people are pseudonymous ids (`p1`, `p2`, …).
  * Opaque to the dashboard: only the WASM engine reads it.
  */
-days: Record<string, unknown>, snapshots: { [key in string]: JsonValue }, weeks: Array<string>, months: Array<string>, series_weekly: { [key in string]: Array<number | null> }, n_weekly: { [key in string]: Array<number | null> }, series_monthly: { [key in string]: Array<number | null> }, n_monthly: { [key in string]: Array<number | null> }, detail: { [key in string]: Detail }, ai_compare: AiCompare | null, security: JsonValue | null, hotspots: JsonValue | null, velocity: JsonValue | null, meta: Meta, };
+days: Record<string, unknown>, 
+/**
+ * Pooled snapshot per measured date (week-ends, month-ends, the as-of tip).
+ */
+snapshots: { [key in string]: SnapshotPoint }, weeks: Array<string>, months: Array<string>, series_weekly: { [key in string]: Array<number | null> }, n_weekly: { [key in string]: Array<number | null> }, series_monthly: { [key in string]: Array<number | null> }, n_monthly: { [key in string]: Array<number | null> }, detail: { [key in string]: Detail }, ai_compare: AiCompare | null, security: SecurityDetail | null, hotspots: Array<RepoHotspots>, velocity: JsonValue | null, meta: Meta, };

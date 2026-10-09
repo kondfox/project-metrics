@@ -2,6 +2,7 @@ import { useCallback, useContext, useMemo } from "react";
 import { bucketMetrics, buckets, type Buckets } from "../data/project";
 import type { Leader, Metrics } from "../data/types";
 import { chartWindow } from "../lib/ranges";
+import { isMeasured, type NotMeasuredId } from "../metrics/registry";
 import { DashboardContext, type DashboardState } from "./context";
 
 export function useDashboard(): DashboardState {
@@ -49,4 +50,10 @@ export function useChartBuckets(): { buckets: Buckets; indices: number[]; inRang
 export function useLowN(): (n: number | null | undefined) => boolean {
   const threshold = useDashboard().project.meta.low_n_threshold;
   return useCallback((n) => n != null && n < threshold, [threshold]);
+}
+
+/** Was this input measured by the run that wrote the data? */
+export function useMeasured(): (id: NotMeasuredId) => boolean {
+  const notMeasured = useDashboard().project.meta.not_measured;
+  return useCallback((id) => isMeasured(notMeasured, id), [notMeasured]);
 }

@@ -108,6 +108,7 @@ fn collect_fixture_workspace() {
     };
     let mut opts = CollectOptions::new(d("2025-02-28"));
     opts.fetch = false;
+    opts.snapshots = false; // covered by tests/snapshots.rs
     let c = collect(&ws, &opts).unwrap();
     let p = &c.project;
 
@@ -209,6 +210,7 @@ fn ai_attribution_off_hides_ai_series() {
     };
     let mut opts = CollectOptions::new(d("2025-02-28"));
     opts.fetch = false;
+    opts.snapshots = false; // covered by tests/snapshots.rs
     opts.use_cache = false;
     let c = collect(&ws, &opts).unwrap();
     assert!(!c.project.series_monthly.contains_key("ai_assist_commit_pct"));

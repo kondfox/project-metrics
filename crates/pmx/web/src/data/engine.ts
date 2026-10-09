@@ -42,6 +42,7 @@ export function engineFrom(call: (request: unknown) => unknown, project: Project
   call({
     op: "load",
     days: project.days,
+    snapshots: project.snapshots,
     breadth_roles: project.project.breadth_roles,
     ai_attribution: project.project.ai_attribution,
   });

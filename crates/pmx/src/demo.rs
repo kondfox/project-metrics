@@ -47,7 +47,7 @@ const REPOS: &[RepoSpec] = &[
         dir: "internal",
         exts: &["go", "go", "go", "sql"],
         test: |dir, stem| format!("{dir}/{stem}_test.go"),
-        lockfile: "go.sum",
+        lockfile: "go.mod",
     },
     RepoSpec {
         name: "shop-web",
@@ -157,6 +157,19 @@ impl RepoState {
     fn line(&mut self, ext: &str) -> String {
         self.counter += 1;
         let n = self.counter;
+        // Every fourth line branches, so complexity and hotspots have something to measure.
+        if n % 4 == 0 {
+            return match ext {
+                "go" => format!("\tif v{n} > {} {{ return v{n} }}", n % 13),
+                "kt" | "kts" => format!("    if (v{n} > {}) return v{n}", n % 13),
+                "ts" | "tsx" => format!("if (v{n} > {} && ready) return v{n};", n % 13),
+                _ => self.line_plain(ext, n),
+            };
+        }
+        self.line_plain(ext, n)
+    }
+
+    fn line_plain(&self, ext: &str, n: u64) -> String {
         match ext {
             "go" => format!("\tv{n} := compute{}(ctx, {n})", n % 97),
             "sql" => format!("ALTER TABLE orders ADD COLUMN c{n} integer DEFAULT {n};"),
@@ -189,6 +202,64 @@ impl RepoState {
     }
 }
 
+/// Real lockfile formats with old versions of real packages that have public advisories, upgraded
+/// in stages (the demo's Security trend improves).
+fn lockfile(repo: &str, stage: usize) -> Vec<String> {
+    let pick = |versions: &[&'static str]| versions[stage.min(versions.len() - 1)];
+    let npm = |deps: &[(&str, &str)]| -> Vec<String> {
+        let mut out = vec![
+            "{".to_string(),
+            format!("  \"name\": \"{repo}\","),
+            "  \"version\": \"1.0.0\",".into(),
+            "  \"lockfileVersion\": 3,".into(),
+            "  \"requires\": true,".into(),
+            "  \"packages\": {".into(),
+            format!("    \"\": {{ \"name\": \"{repo}\", \"version\": \"1.0.0\" }},"),
+        ];
+        for (i, (name, v)) in deps.iter().enumerate() {
+            let comma = if i + 1 < deps.len() { "," } else { "" };
+            out.push(format!(
+                "    \"node_modules/{name}\": {{ \"version\": \"{v}\" }}{comma}"
+            ));
+        }
+        out.extend(["  }".to_string(), "}".into()]);
+        out
+    };
+    match repo {
+        "shop-api" => vec![
+            "module example.com/shop-api".into(),
+            String::new(),
+            "go 1.21".into(),
+            String::new(),
+            "require (".into(),
+            format!("\tgolang.org/x/net {}", pick(&["v0.7.0", "v0.17.0", "v0.33.0"])),
+            format!(
+                "\tgolang.org/x/crypto {}",
+                pick(&["v0.0.0-20200622213623-75b288015ac9", "v0.17.0", "v0.31.0"])
+            ),
+            ")".into(),
+        ],
+        "shop-mobile" => vec![
+            "# This is a Gradle generated file for dependency locking.".into(),
+            format!(
+                "com.squareup.okhttp3:okhttp:{}=releaseRuntimeClasspath",
+                pick(&["3.12.0", "4.9.0", "4.12.0"])
+            ),
+            format!(
+                "com.fasterxml.jackson.core:jackson-databind:{}=releaseRuntimeClasspath",
+                pick(&["2.9.8", "2.12.7.1", "2.17.2"])
+            ),
+            "empty=".into(),
+        ],
+        "shop-e2e" => npm(&[("ws", pick(&["7.4.5", "7.5.10", "8.17.1"]))]),
+        _ => npm(&[
+            ("lodash", pick(&["4.17.15", "4.17.20", "4.17.21"])),
+            ("axios", pick(&["0.21.0", "0.21.1", "0.27.2", "1.7.4"])),
+            ("minimist", pick(&["1.2.0", "1.2.5", "1.2.8"])),
+        ]),
+    }
+}
+
 fn timestamp(day: NaiveDate, hour: u32) -> i64 {
     day.and_hms_opt(hour, 17, 0).expect("valid time").and_utc().timestamp() - 3600
 }
@@ -215,7 +286,7 @@ pub fn generate(dir: &Path, as_of: NaiveDate) -> Result<Workspace> {
             "README.md".into(),
             vec![format!("# {}", spec.name), "Fictional demo repo.".into()],
         );
-        r.files.insert(spec.lockfile.into(), vec!["lock 1".into()]);
+        r.files.insert(spec.lockfile.into(), lockfile(spec.name, 0));
         let paths = vec!["README.md".to_string(), spec.lockfile.to_string()];
         r.commit(
             PEOPLE[1].emails.first().map(|e| (PEOPLE[1].name, *e)).unwrap(),
@@ -282,6 +353,15 @@ pub fn generate(dir: &Path, as_of: NaiveDate) -> Result<Workspace> {
             let lines: Vec<String> = (0..add).map(|_| r.line(ext)).collect();
             r.files.entry(path.clone()).or_default().extend(lines);
             changed.push(path.clone());
+            // Now and then someone copies a block instead of extracting it (duplication).
+            if rng.chance(0.08) {
+                let block: Vec<String> = r.files[&path].iter().take(12).cloned().collect();
+                if block.len() >= 8 {
+                    let copy = format!("{}/legacy{}.{ext}", spec.dir, rng.below(1000));
+                    r.files.entry(copy.clone()).or_default().extend(block);
+                    changed.push(copy);
+                }
+            }
             r.last_touched = Some(path);
             // Tests and docs with the code; habits improve over time.
             if rng.chance(p.tests * (0.6 + 0.6 * t)) {
@@ -316,10 +396,15 @@ pub fn generate(dir: &Path, as_of: NaiveDate) -> Result<Workspace> {
             r.commit((p.name, email), when, &msg, &changed, &[]);
         }
         // Monthly dependency bumps by a bot; an external contractor for a few months.
+        // Dependency upgrades every few months, so known advisories get fixed over time.
+        let stage = ((week - history_start).num_days() / 120) as usize;
         if week.day() <= 7 {
             for (r, spec) in repos.iter_mut().zip(REPOS) {
-                let lock = r.files.entry(spec.lockfile.into()).or_default();
-                lock.push(format!("lock {}", week));
+                let next = lockfile(spec.name, stage);
+                if r.files.get(spec.lockfile) == Some(&next) {
+                    continue;
+                }
+                r.files.insert(spec.lockfile.into(), next);
                 r.commit(
                     BOT,
                     timestamp(week, 6),
@@ -403,6 +488,7 @@ pub fn generate(dir: &Path, as_of: NaiveDate) -> Result<Workspace> {
         people,
         fte: None,
         secrets_triage: Vec::new(),
+        snapshots: Default::default(),
         classifiers: BTreeMap::new(),
         velocity: None,
     };

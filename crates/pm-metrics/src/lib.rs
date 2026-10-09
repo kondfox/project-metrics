@@ -4,6 +4,7 @@ pub mod day;
 pub mod metrics;
 pub mod model;
 pub mod period;
+pub mod snapshot;
 pub mod stats;
 
 pub use day::{Day, Days, Group, aggregate, merge_days};

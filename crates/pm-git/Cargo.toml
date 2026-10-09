@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 chrono.workspace = true
+tar.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

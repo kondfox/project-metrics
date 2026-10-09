@@ -16,13 +16,17 @@ use std::cell::RefCell;
 
 use chrono::NaiveDate;
 use pm_classify::Role;
+use std::collections::BTreeMap;
+
 use pm_metrics::model::mix_roles;
+use pm_metrics::snapshot::{SnapshotPoint, at_or_before};
 use pm_metrics::{Days, MetricOptions, aggregate, metrics};
 use serde::Deserialize;
 use serde_json::json;
 
 struct State {
     days: Days,
+    snapshots: BTreeMap<NaiveDate, SnapshotPoint>,
     opts: MetricOptions,
 }
 
@@ -35,6 +39,8 @@ thread_local! {
 enum Request {
     Load {
         days: Days,
+        #[serde(default)]
+        snapshots: BTreeMap<NaiveDate, SnapshotPoint>,
         breadth_roles: Vec<Role>,
         ai_attribution: bool,
     },
@@ -50,6 +56,7 @@ pub fn handle(request: &str) -> String {
         Err(e) => json!({ "error": format!("bad request: {e}") }),
         Ok(Request::Load {
             days,
+            snapshots,
             breadth_roles,
             ai_attribution,
         }) => {
@@ -63,6 +70,7 @@ pub fn handle(request: &str) -> String {
                         mix_roles: roles,
                     },
                     days,
+                    snapshots,
                 })
             });
             reply
@@ -70,7 +78,11 @@ pub fn handle(request: &str) -> String {
         Ok(Request::Range { start, end }) => STATE.with(|s| match &*s.borrow() {
             None => json!({ "error": "load the project first" }),
             Some(st) => {
-                let m = metrics(&aggregate(&st.days, start, end), &st.opts);
+                let m = metrics(
+                    &aggregate(&st.days, start, end),
+                    &st.opts,
+                    at_or_before(&st.snapshots, end),
+                );
                 serde_json::to_value(&m).expect("metrics serialize")
             }
         }),
