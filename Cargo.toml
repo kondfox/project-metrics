@@ -14,6 +14,7 @@ pm-classify = { path = "crates/pm-classify" }
 pm-config = { path = "crates/pm-config" }
 pm-git = { path = "crates/pm-git" }
 pm-metrics = { path = "crates/pm-metrics" }
+pm-progress = { path = "crates/pm-progress" }
 pmx = { path = "crates/pmx" }
 
 anyhow = "1"
@@ -27,3 +28,4 @@ sha2 = "0.11"
 tempfile = "3"
 thiserror = "2"
 toml = "1"
+toml_edit = "0.25"

@@ -1,72 +1,14 @@
 //! End-to-end `collect` on a scripted multi-repo workspace (fictional people and repos). Every
 //! expected value below is worked out by hand from the script.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+mod common;
 
-use chrono::NaiveDate;
+use std::path::Path;
+
+use common::{BOB, BOT, JANE, JANE_HOME, Repo, SAM, d, lines};
 use pm_classify::Role;
 use pm_config::{Config, Workspace};
 use pmx::{CollectOptions, collect, write_outputs};
-
-const JANE: (&str, &str) = ("Jane Doe", "jane@work.example");
-const JANE_HOME: (&str, &str) = ("jane", "jane@home.example");
-const BOB: (&str, &str) = ("Bob Builder", "bob@work.example");
-const BOT: (&str, &str) = ("dependabot[bot]", "49699333+dependabot[bot]@users.noreply.github.com");
-const SAM: (&str, &str) = ("Sam Contractor", "sam@agency.example");
-
-fn git(dir: &Path, args: &[&str], date: &str, who: (&str, &str)) {
-    let ts = format!("{date}T10:00:00+01:00");
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main"])
-        .args(args)
-        .env("GIT_AUTHOR_NAME", who.0)
-        .env("GIT_AUTHOR_EMAIL", who.1)
-        .env("GIT_AUTHOR_DATE", &ts)
-        .env("GIT_COMMITTER_NAME", who.0)
-        .env("GIT_COMMITTER_EMAIL", who.1)
-        .env("GIT_COMMITTER_DATE", &ts)
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{args:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-/// `n` distinct, non-trivial lines.
-fn lines(tag: &str, range: std::ops::Range<usize>) -> String {
-    range.map(|i| format!("export const {tag}{i} = {i};\n")).collect()
-}
-
-struct Repo(PathBuf);
-
-impl Repo {
-    fn init(dir: PathBuf) -> Repo {
-        std::fs::create_dir_all(&dir).unwrap();
-        git(&dir, &["init", "-q"], "2024-01-01", JANE);
-        Repo(dir)
-    }
-
-    fn write(&self, path: &str, body: &str) -> &Self {
-        let p = self.0.join(path);
-        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(p, body).unwrap();
-        self
-    }
-
-    fn commit(&self, date: &str, who: (&str, &str), msg: &str) {
-        git(&self.0, &["add", "-A"], date, who);
-        git(&self.0, &["commit", "-q", "-m", msg], date, who);
-    }
-}
-
-fn d(s: &str) -> NaiveDate {
-    NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
-}
 
 fn build_fixture(root: &Path) {
     let api = Repo::init(root.join("src/api"));

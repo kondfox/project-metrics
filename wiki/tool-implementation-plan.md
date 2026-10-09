@@ -1,7 +1,8 @@
 # Portable metrics tool — implementation plan
 
-**Status:** M1a built (2026-10-09): the git-derived core reproduces the prototype (see
-[parity.md](parity.md) §6). M1b is next. Drafted 2026-10-08, revised 2026-10-09 with owner decisions.
+**Status:** M1 built (2026-10-09): the git-derived core reproduces the prototype (M1a, see
+[parity.md](parity.md) §6), and a workspace can be set up, collected incrementally and resumed from the
+CLI (M1b). M2 (dashboard) is next. Drafted 2026-10-08, revised 2026-10-09 with owner decisions.
 **What** to measure is defined by [metrics-spec.md](metrics-spec.md) (source of truth). This page covers
 **how** to build the tool, which runs anywhere and shows its results in a web dashboard. Where this page
 changes the spec, it says so with **⟂ spec change**. The spec must be updated to match before M1.
@@ -26,6 +27,9 @@ in the browser. A second command combines several projects into the **fleet view
 | D7 | **Open source**, dual-licensed **MIT OR Apache-2.0**, at `github.com/kondfox/project-metrics`. The repo holds the tool and this wiki. Company-specific pilot data and the Python prototype stay private | 2026-10-09 |
 | D8 | **M1 is split.** M1a = the numbers (config, classification, git ingest, per-day store, M1 metrics, `project.json`, parity). M1b = setup commands and progress/ETA. Trust the numbers before polishing usability | 2026-10-09 |
 | D9 | `project.json` keeps per-person day components (needed to recompute multi-stack, active devs and commits per dev for any range) under **pseudonymous ids** (`p1`, `p2`, …). The id → name map lives only in `private/leads.json` | 2026-10-09 |
+| D11 | **Resume unit = one repo's stage** (ingest, rework walk). Each finished stage is written to the cache at once, so Ctrl-C loses only the stages in flight. A stage continues from its cached SHA when the new tip descends from it; otherwise (force-push, `--full`) the repo is recomputed | 2026-10-09 |
+| D12 | Git reads are prefiltered on the **committer date** (`--since-as-filter`, git ≥ 2.38, 7 days before the author-date bound) so incremental runs don't re-diff old history; the exact author-date filter stays in code (spec §1.1). Older git works, just slower | 2026-10-09 |
+| D13 | `[fte]` is `source = "static"` with `value` or dated `periods`, or `source = "file"` with the spec §10.2 JSON (replaces the `fte.toml` placeholder) | 2026-10-09 |
 | D10 | The parity harness is a workspace crate (`pmx-parity`, not published) that reads the golden set from `PMX_GOLDEN_DIR` and prints to the terminal only. It runs twice: in the **prototype dialect** (the prototype's test rules and git reading) every M1 series must match exactly; in the spec dialect the intentional differences are reported | 2026-10-09 |
 
 ---
@@ -68,10 +72,18 @@ pmx fleet serve|export --manifest fleet.toml ──► fleet.json + fleet dashbo
 - **One metrics implementation for CLI and browser.** The dashboard recomputes custom ranges from
   `days` (spec §10.6). Running the same Rust code via WASM rules out the drift the prototype already
   has: the published fleet page is ahead of `collector/c.js`.
-- **SQLite cache (`.pmx/cache.sqlite`).** Stores the last processed SHA per repo, per-day components,
-  snapshot results by SHA, LLM answers by `(package id, diff hash, rubric version, provider, model
-  version)`, PR pages, and per-unit timings for the ETA. Every finished unit is committed at once, so
-  runs are resumable. The rework walk restarts from the last run's date minus 21 days.
+- **SQLite cache (`.pmx/cache.sqlite`).** Stores each repo's stage results keyed by `(repo, stage,
+  settings hash)` with the SHA they were computed at (M1: the ingest's per-day components and the rework
+  counts), later snapshot results by SHA, LLM answers by `(package id, diff hash, rubric version,
+  provider, model version)` and PR pages, plus per-stage timings for the ETA. Every finished unit is
+  committed at once, so runs are resumable (D11). The settings hash covers what changes a result besides
+  the SHA (pmx version, `range_start`, role, role rules and `[people]` for the ingest), so editing
+  `[people]` redoes the ingest but not the rework walk.
+- **Incremental runs.** Ingest reads only `cached SHA..tip` and adds it: exact, since every component is
+  a per-commit sum. The rework walk restarts 21 days before the earliest new author date and replaces
+  every day from that date on. Tests check both against full runs, including a back-dated commit. An
+  incremental rework can differ from a full one only when author dates run backwards across that 21-day
+  boundary; `pmx collect --full` recomputes everything.
 - **External tools are optional.** `pmx doctor` reports what is installed. `pmx tools install` downloads
   pinned versions of the Go binaries (scc, osv-scanner, gitleaks) into the user cache. jscpd (Node) and
   semgrep (Python) are the setup friction. A missing tool shows as "not measured" (spec §10.5).
@@ -96,10 +108,11 @@ One project is one **workspace folder**. The repos it lists can live anywhere.
 | Command | What it does |
 |---|---|
 | `pmx init [dirs…]` | Scans for git clones. Suggests a branch per repo (from `origin/HEAD`) and a role from the repo's contents: `*.csproj` → backend, React/Vite → frontend, `android/`/`ios/` → mobile, Terraform → infra, Cypress/Playwright → qa, mixed → `per-file`. Reads the code-host type and project id from the remote URL. Lockfiles are auto-discovered. You confirm the suggestions; it writes `pmx.toml` |
-| `pmx repo add <path\|url> [--role] [--branch]` · `list` · `remove` | Edit the repo list. For a URL, pmx keeps a bare clone in `.pmx/repos/` and only reads from it, so working copies are never touched |
-| `pmx people` | Lists every author identity across **all** repos plus code-host logins, and proposes merges (same name with different emails, noreply addresses, matching logins) and bots/externals. You accept or edit; it writes `[people]`. This step is what makes cross-repo per-person metrics (multi-stack, active devs, mentoring) correct |
-| `pmx check` | Every path exists, every branch resolves, tokens are present, no unmapped identities above a commit threshold |
-| `pmx import-config config_acme.json` | Converts a prototype config (plus `externals.json`, `fte.json`, `secrets_triage.json`) |
+| `pmx repo add <path\|url> [--role] [--branch] [--name]` · `list` · `set <name> [--role] [--branch] [--rev] [--rename]` · `remove` | Edit the repo list. For a URL, pmx keeps a bare clone in `.pmx/repos/` and only reads from it, so working copies are never touched. `add` suggests role and branch like `init` |
+| `pmx people` · `--apply` · `merge "<Person>" <id>…` · `bot <id>…` · `external <id>…` | Lists every author identity across **all** repos since `range_start` (code-host logins arrive with M4), and proposes merges: same normalized name, `first.last` email local part, GitHub noreply login. Flags automated-looking identities as bot candidates. `--apply` (or answering yes) writes `[people]`; `merge`/`bot`/`external` fix the rest. This step is what makes cross-repo per-person metrics (multi-stack, active devs, mentoring) correct |
+| `pmx check [--threshold 10]` | Every path exists (URL repos: reachable), every branch resolves, lockfile overrides exist, tokens are present, the `local-only` data policy holds for the classifier and its fallbacks, the FTE file has the project, and no identity with ≥ threshold commits is missing from `[people]`. Exit code 1 on any error |
+| `pmx import-config config_acme.json` | Converts a prototype config (plus `externals.json`, `fte.json`, `secrets_triage.json`, found next to it or in `../tools/`, or passed with flags) |
+| `pmx plan` (= `collect --dry-run`) | Prints the work per stage and repo (cached, incremental, full) and the ETA, without running anything |
 
 `pmx collect` runs `git fetch` by default. This only updates remote-tracking refs. `--no-fetch`
 measures what is already there.
@@ -137,9 +150,9 @@ token_env = "GL_TOKEN"
 bots = ["gitlab-runner@example.com"]
 externals = ["Sam Contractor"]
 
-[fte]
-source = "file"                   # spec §10.2
-file = "fte.toml"
+[fte]                             # spec §10.2
+source = "static"
+value = 4.5
 
 [[secrets_triage]]
 repo = "shop-api"
@@ -205,8 +218,9 @@ Before any heavy work, `collect` counts what's left with cheap queries, minus wh
 
 | Stage | Unit | How it's counted |
 |---|---|---|
+| Fetch | repo | Repos that follow a branch (or URL repos not cloned yet) |
 | Git ingest | commit | `git rev-list --count` per repo, from the last processed SHA |
-| Rework walk | commit | Commits since the last run's date minus 21 days |
+| Rework walk | commit | Commits since the cached tip's date minus 21 days (an estimate) |
 | Snapshots | (SHA, tool) | Uncached week-end/month-end SHAs × installed tools, weighted by tree size (KLOC from a quick `scc`) |
 | Pull requests | PR | API total (GitHub `total_count`, GitLab `X-Total`) minus cached |
 | Velocity | work package | Unscored packages. Known only after ingest; estimated from commits until then |
@@ -217,9 +231,14 @@ Before any heavy work, `collect` counts what's left with cheap queries, minus wh
 for snapshots) from earlier runs stored in the cache. A first run uses built-in defaults. The estimate is
 corrected live as each stage runs, and it accounts for stages running in parallel.
 
+As built (M1b): timings are recorded per repo and stage (`timing` table; the last 50 per stage). Before a
+stage runs its time is `units × learned cost ÷ workers`; while it runs, the observed wall-clock rate
+takes over in proportion to the work done. Repos run on a worker pool (one per CPU core, at most one per
+repo). Defaults: 2 s per fetch, 1 ms per ingested commit, 1.5 ms per walked commit.
+
 ### 5.3 Rendering
 
-TTY (`indicatif`):
+TTY (a block redrawn in place; no `indicatif` needed):
 
 ```
 pmx collect · Project A                         overall ▕████████░░░░░░░░▏ 52%  ETA ~6m
@@ -234,7 +253,8 @@ pmx collect · Project A                         overall ▕██████�
 - `--progress=plain` prints a status line every 10 seconds (for CI and pipes).
 - `--progress=json` emits newline-delimited events for other tools.
 - `--dry-run` (alias `pmx plan`) prints the work table and the ETA without running anything.
-- **Ctrl-C** loses at most the units in flight. The next run resumes.
+- **Ctrl-C** loses at most the units in flight (D11). The next run resumes.
+- `--full` recomputes every repo; `--no-cache` neither reads nor writes the cache.
 - **Final summary:** computed vs cached counts, skipped tools, warnings, classifier escalations and
   the share of low-confidence answers.
 
@@ -408,7 +428,7 @@ derived from schema answers. The rubric version bump (`six-axis@2`) invalidates 
 |---|---|---|
 | **M0** | Freeze the prototype outputs for Project A, Project B and Project C at pinned SHAs as golden files (private). Write the deviation register ([parity.md](parity.md)). Update metrics-spec.md with this page's ⟂ changes | Golden set + long-format table exist; the harness runs **locally** against them (golden data is private, so public CI uses synthetic fixtures instead) |
 | **M1a** ✓ 2026-10-09 | `pm-config` (incl. the prototype-config conversion), `pm-classify`, `pm-git`, `pm-metrics`; `pmx collect` (fetch, git ingest, rework walk, per-repo cache) and `pmx export --format long`; activity, rework, tests/docs, multi-stack and AI metrics, weekly and monthly; `project.json` + `private/leads.json`; `pmx-parity` | Matches the golden files except the listed ⟂ differences. **Done:** exact in the prototype dialect for all three projects |
-| **M1b** | `init`, `repo`, `people`, `check`, `import-config` (CLI over the M1a converter, plus `fte.json` and `secrets_triage.json`); the progress, resume and ETA framework (§5), incl. incremental ingest from the last processed SHA | A new workspace set up from scratch without hand-editing TOML; Ctrl-C and resume lose at most the units in flight |
+| **M1b** ✓ 2026-10-09 | `init`, `repo`, `people`, `check`, `import-config` (CLI over the M1a converter, plus `fte.json` and `secrets_triage.json`); the progress, resume and ETA framework (§5), incl. incremental ingest from the last processed SHA | A new workspace set up from scratch without hand-editing TOML; Ctrl-C and resume lose at most the units in flight. **Done:** `crates/pmx/tests/cli.rs` runs init → people → repo → check → collect → export; `tests/incremental.rs` checks incremental, resumed and rewritten-history runs against full runs |
 | **M2** | Project dashboard: weekly/monthly, custom range via WASM, low-n and "not measured" states, `serve`/`export` | One project viewable end to end |
 | **M3** | `pm-snapshot`: scc, jscpd, osv-scanner, gitleaks, semgrep; Quality with duplication; Security score; SAST trend; `doctor`, `tools install` | Quality and Security reproduced for all three projects |
 | **M4** | `pm-codehost`: GitHub + GitLab; peer review, cycle time, review wait, mentoring (unified expert rule, spec §8) | Spec §8 complete |

@@ -31,9 +31,10 @@ token_env = "GL_TOKEN"
 bots = ["gitlab-runner@example.com"]
 externals = ["Sam Contractor"]
 
-[fte]
-source = "file"                   # spec §10.2
-file = "fte.toml"
+[fte]                             # spec §10.2
+source = "static"
+value = 4.5                       # or periods = [{ from = "2026-08-01", to = "2026-08-31", fte = 4.5 }, …]
+# source = "file", file = "fte.json"   # JSON keyed by project name
 
 [[secrets_triage]]
 repo = "shop-api"

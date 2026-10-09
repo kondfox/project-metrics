@@ -43,7 +43,10 @@ deviates from the prototype it says so with **⟂ change vs prototype**.
   project if its author date is on or after `range_start` and on or before `as_of`. pmx does not use
   `git log --since`: that filters on the committer date, a bare date takes the *current time of day*
   (so results depend on when you run), and the walk stops at the first older commit. On the golden
-  repos the two selections are identical. **⟂ change vs prototype.**
+  repos the two selections are identical. **⟂ change vs prototype.** For speed, git is asked only for
+  commits whose committer date is at most 7 days before the bound (`--since-as-filter`, git ≥ 2.38);
+  a committer date earlier than the author date by more than that does not occur in practice (none in
+  the golden repos).
 - **Default window** for headline numbers: the last **complete** month. Scores (Quality, Velocity,
   Security) are also computed per week for the trend lines.
 - **Small samples.** A week often has few events (a 3-person team may merge 5 PRs). Every ratio carries
@@ -359,7 +362,7 @@ setup commands: [tool-implementation-plan.md §3](tool-implementation-plan.md#3-
 | `[people]` | **⟂ spec change 2026-10-09:** one table replaces `identity` + `usernames`. `"Canonical Name" = [emails…, code-host logins…]`, plus `bots = […]` and `externals = […]` (§1.3) |
 | `security_lockfiles` | Optional override; default = auto-discover every lockfile OSV-Scanner supports |
 | `[code_host]` `type`, `base`, `token_env` | Tokens only by env-var name, never inline |
-| `[fte]` | FTE provider (§10.2) |
+| `[fte]` | FTE provider (§10.2): `source = "static"` with `value` or dated `periods = [{from, to?, fte}]`, or `source = "file"` with `file` (the JSON below) |
 | `[[secrets_triage]]` | `repo, file, rule?, verdict (false-positive · rotated · accepted), by, date` |
 | `[classifiers.<name>]`, `[velocity] classifier` | LLM classifiers (§10.3) |
 

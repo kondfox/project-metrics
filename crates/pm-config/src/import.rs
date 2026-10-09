@@ -6,7 +6,10 @@ use std::collections::BTreeMap;
 use chrono::NaiveDate;
 use serde_json::Value;
 
-use crate::{CodeHost, CodeHostId, CodeHostKind, Config, ConfigError, People, Project, RepoConfig, RepoRole};
+use crate::{
+    CodeHost, CodeHostId, CodeHostKind, Config, ConfigError, Fte, FtePeriod, FteSource, People, Project, RepoConfig,
+    RepoRole, SecretsTriage, TriageVerdict,
+};
 
 pub struct Imported {
     pub config: Config,
@@ -31,8 +34,19 @@ fn is_sha(s: &str) -> bool {
     s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// `externals` is the prototype's `externals.json` (`{"<project>": [{name, email}], "*": [...]}`).
-pub fn from_prototype(cfg: &Value, externals: Option<&Value>) -> Result<Imported, ConfigError> {
+/// The prototype's side files, all optional.
+#[derive(Default)]
+pub struct SideFiles<'a> {
+    /// `externals.json`: `{"<project>": [{name, email}], "*": [...]}`.
+    pub externals: Option<&'a Value>,
+    /// `fte.json`: `{"<project>": <fte>}`.
+    pub fte: Option<&'a Value>,
+    /// `secrets_triage.json`: `{"entries": [{repo, file, rule?, verdict, by?, date?}]}`.
+    pub secrets_triage: Option<&'a Value>,
+}
+
+pub fn from_prototype(cfg: &Value, side: &SideFiles) -> Result<Imported, ConfigError> {
+    let externals = side.externals;
     let mut notes = Vec::new();
     let name = str_field(cfg, "project")?.to_string();
     let range_start = NaiveDate::parse_from_str(str_field(cfg, "range_start")?, "%Y-%m-%d")
@@ -83,6 +97,7 @@ pub fn from_prototype(cfg: &Value, externals: Option<&Value>) -> Result<Imported
             ..Default::default()
         });
     }
+    let repo_names: Vec<String> = repos.iter().map(RepoConfig::display_name).collect();
     if monorepo {
         notes.push("`monorepo: true` became `role = \"per-file\"` on every repo".into());
     }
@@ -130,6 +145,7 @@ pub fn from_prototype(cfg: &Value, externals: Option<&Value>) -> Result<Imported
         notes.push("`state_window` dropped: multi-stack now uses the selected range (spec §5)".into());
     }
 
+    let fte = import_fte(side.fte, &name, &mut notes);
     let config = Config {
         project: Project {
             name,
@@ -141,8 +157,8 @@ pub fn from_prototype(cfg: &Value, externals: Option<&Value>) -> Result<Imported
         role_rules: None,
         code_host,
         people,
-        fte: None,
-        secrets_triage: Vec::new(),
+        fte,
+        secrets_triage: import_triage(side.secrets_triage, &repo_names, &mut notes),
         classifiers: BTreeMap::new(),
         velocity: None,
     };
@@ -152,6 +168,73 @@ pub fn from_prototype(cfg: &Value, externals: Option<&Value>) -> Result<Imported
         state_window_days,
         notes,
     })
+}
+
+fn import_fte(fte: Option<&Value>, project: &str, notes: &mut Vec<String>) -> Option<Fte> {
+    let v = fte?.get(project)?;
+    let mut f = Fte {
+        source: FteSource::Static,
+        value: None,
+        periods: Vec::new(),
+        file: None,
+    };
+    if let Some(x) = v.as_f64() {
+        f.value = Some(x);
+    } else if let Some(list) = v.as_array() {
+        for p in list {
+            let date = |k: &str| {
+                p.get(k)
+                    .and_then(Value::as_str)
+                    .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+            };
+            match (date("from"), p.get("fte").and_then(Value::as_f64)) {
+                (Some(from), Some(fte)) => f.periods.push(FtePeriod {
+                    from,
+                    to: date("to"),
+                    fte,
+                }),
+                _ => notes.push(format!("fte: skipped a period without `from` or `fte`: {p}")),
+            }
+        }
+    }
+    (f.value.is_some() || !f.periods.is_empty()).then_some(f)
+}
+
+fn import_triage(triage: Option<&Value>, repos: &[String], notes: &mut Vec<String>) -> Vec<SecretsTriage> {
+    let mut out = Vec::new();
+    let entries = triage.and_then(|t| t.get("entries")).and_then(Value::as_array);
+    for e in entries.into_iter().flatten() {
+        let field = |k: &str| e.get(k).and_then(Value::as_str).map(String::from);
+        let (Some(repo), Some(file)) = (field("repo"), field("file")) else {
+            continue;
+        };
+        if !repos.contains(&repo) {
+            continue;
+        }
+        let verdict = match field("verdict").as_deref() {
+            Some("false-positive") => TriageVerdict::FalsePositive,
+            Some("rotated") => TriageVerdict::Rotated,
+            Some("accepted") => TriageVerdict::Accepted,
+            other => {
+                notes.push(format!(
+                    "secrets triage: skipped {repo}/{file}, unknown verdict {other:?}"
+                ));
+                continue;
+            }
+        };
+        if field("by").is_none() || field("date").is_none() {
+            notes.push(format!("secrets triage: {repo}/{file} has no `by`/`date`; set them"));
+        }
+        out.push(SecretsTriage {
+            repo,
+            file,
+            rule: field("rule"),
+            verdict,
+            by: field("by").unwrap_or_else(|| "unknown".into()),
+            date: field("date").unwrap_or_else(|| "unknown".into()),
+        });
+    }
+    out
 }
 
 #[cfg(test)]
@@ -182,7 +265,24 @@ mod tests {
             }
         });
         let ext = json!({"*": [{"name": "Pat Vendor"}], "Acme Shop": [{"name": "Sam", "email": "sam@agency.example"}]});
-        let imp = from_prototype(&cfg, Some(&ext)).unwrap();
+        let fte = json!({"Acme Shop": 4.5, "Other": 2});
+        let triage = json!({"entries": [
+            {"repo": "shop-api", "file": "certs/dev.pem", "verdict": "rotated", "by": "Jane Doe", "date": "2026-10-08"},
+            {"repo": "elsewhere", "file": "x.pem", "verdict": "accepted"},
+            {"repo": "shop-web", "file": ".env.sample", "rule": "generic-api-key", "verdict": "false-positive"}
+        ]});
+        let side = SideFiles {
+            externals: Some(&ext),
+            fte: Some(&fte),
+            secrets_triage: Some(&triage),
+        };
+        let imp = from_prototype(&cfg, &side).unwrap();
+        assert_eq!(imp.config.fte.as_ref().unwrap().value, Some(4.5));
+        let t = &imp.config.secrets_triage;
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[1].rule.as_deref(), Some("generic-api-key"));
+        assert_eq!(t[1].by, "unknown");
+        assert!(imp.notes.iter().any(|n| n.contains("no `by`/`date`")));
         let c = imp.config;
         assert_eq!(imp.state_window_days, Some(90));
         assert!(!c.project.ai_attribution);
@@ -215,7 +315,7 @@ mod tests {
             "repos": [{"name": "mono", "branch": "origin/main", "role": "backend"}],
             "breadth_roles": ["frontend", "backend", "qa"]
         });
-        let imp = from_prototype(&cfg, None).unwrap();
+        let imp = from_prototype(&cfg, &SideFiles::default()).unwrap();
         assert_eq!(imp.config.repos[0].role, RepoRole::PerFile);
         assert!(imp.notes.iter().any(|n| n.contains("per-file")));
     }

@@ -152,7 +152,11 @@ fn run_project(g: &Golden, key: &str, mode: Mode) -> Result<Run> {
         &std::fs::read_to_string(g.dir.join("configs").join(format!("config_{key}.json")))
             .with_context(|| format!("golden config for `{key}`"))?,
     )?;
-    let imported = pm_config::import::from_prototype(&cfg_json, g.externals.as_ref())?;
+    let side = pm_config::import::SideFiles {
+        externals: g.externals.as_ref(),
+        ..Default::default()
+    };
+    let imported = pm_config::import::from_prototype(&cfg_json, &side)?;
     let pinned = &g.manifest["projects"][key]["repos"];
     for repo in &imported.config.repos {
         let name = repo.display_name();

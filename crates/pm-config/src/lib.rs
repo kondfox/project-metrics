@@ -1,5 +1,6 @@
 //! The project definition, `pmx.toml` (metrics spec §10.1, plan §3.3).
 
+pub mod edit;
 pub mod identity;
 pub mod import;
 
@@ -190,9 +191,34 @@ pub enum CodeHostKind {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Fte {
-    pub source: String,
+    pub source: FteSource,
+    /// `static`: one value for every date.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    /// `static`: dated values instead (an open `to` means until further notice).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub periods: Vec<FtePeriod>,
+    /// `file`: a JSON file in the spec §10.2 shape, keyed by project name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
+}
+
+/// Where FTE comes from (spec §10.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FteSource {
+    Static,
+    File,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FtePeriod {
+    #[serde(with = "date_str")]
+    pub from: NaiveDate,
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_date_str")]
+    pub to: Option<NaiveDate>,
+    pub fte: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -248,6 +274,25 @@ impl<'de> Deserialize<'de> for People {
     }
 }
 
+mod opt_date_str {
+    use chrono::NaiveDate;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(d: &Option<NaiveDate>, s: S) -> Result<S::Ok, S::Error> {
+        match d {
+            Some(d) => s.collect_str(&d.format("%Y-%m-%d")),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<NaiveDate>, D::Error> {
+        let s = String::deserialize(d)?;
+        NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+            .map(Some)
+            .map_err(|e| serde::de::Error::custom(format!("expected a YYYY-MM-DD date, got `{s}`: {e}")))
+    }
+}
+
 mod date_str {
     use chrono::NaiveDate;
     use serde::{Deserialize, Deserializer, Serializer};
@@ -292,6 +337,20 @@ impl Config {
         }
         if self.project.breadth_roles.is_empty() {
             return bad("[project] breadth_roles is empty".into());
+        }
+        if let Some(f) = &self.fte {
+            match f.source {
+                FteSource::Static if f.value.is_none() && f.periods.is_empty() => {
+                    return bad("[fte] source = \"static\" needs `value` or `periods`".into());
+                }
+                FteSource::File if f.file.is_none() => return bad("[fte] source = \"file\" needs `file`".into()),
+                _ => {}
+            }
+        }
+        for t in &self.secrets_triage {
+            if !names.contains(&t.repo) {
+                return bad(format!("[[secrets_triage]] names unknown repo `{}`", t.repo));
+            }
         }
         let mut owner: BTreeMap<String, &str> = BTreeMap::new();
         for (person, ids) in &self.people.persons {

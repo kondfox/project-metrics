@@ -68,7 +68,9 @@ fn log_and_rework_on_a_real_repo() {
     let tip = g.rev_parse("HEAD").unwrap();
     assert_eq!(tip.len(), 40);
 
-    let commits = g.commits(&tip).unwrap();
+    let mut seen = 0;
+    let commits = g.commits(&LogRange::new(&tip), &mut |_| seen += 1).unwrap();
+    assert_eq!(seen, 3);
     assert_eq!(commits.len(), 3);
     let first = &commits[2];
     assert_eq!(first.author_date, d("2025-01-01"));
@@ -82,8 +84,53 @@ fn log_and_rework_on_a_real_repo() {
     assert_eq!(commits[0].files[0].added, 0);
 
     let is_source = |p: &str| p.ends_with(".ts");
-    let rw = g.rework(&tip, d("2024-12-01"), 21, &is_source).unwrap();
+    let mut walked = 0;
+    let rw = g
+        .rework(&tip, d("2024-12-01"), 21, &is_source, &mut || walked += 1)
+        .unwrap();
+    assert_eq!(walked, 3);
     assert_eq!(rw[&d("2025-01-01")], (2, 0));
     assert_eq!(rw[&d("2025-01-05")], (1, 1));
     assert!(!rw.contains_key(&d("2025-01-06")));
+}
+
+#[test]
+fn ranges_ancestry_and_setup_helpers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    git(dir, &["init", "-q"], "2025-01-01", "x", "x@example.com");
+    write(dir, "a.ts", "const a = 1;\n");
+    commit(dir, "2025-01-01", "one");
+    let g = Git::open(dir);
+    let first = g.rev_parse("HEAD").unwrap();
+    write(dir, "b.ts", "const b = 2;\n");
+    commit(dir, "2025-02-01", "two");
+    write(dir, "c.ts", "const c = 3;\n");
+    commit(dir, "2025-03-01", "three");
+    let tip = g.rev_parse("HEAD").unwrap();
+
+    assert_eq!(g.count_commits(&LogRange::new(&tip)).unwrap(), 3);
+    let newer = LogRange::new(&tip).since_commit(&first);
+    assert_eq!(g.count_commits(&newer).unwrap(), 2);
+    let new_commits = g.commits(&newer, &mut |_| {}).unwrap();
+    assert_eq!(new_commits.len(), 2);
+    assert_eq!(g.author_dates(&newer).unwrap(), vec![d("2025-03-01"), d("2025-02-01")]);
+    let ids = g.identities(&LogRange::new(&tip)).unwrap();
+    assert_eq!(ids[0].email, "jane@example.com");
+    assert_eq!(ids[0].name, "Jane Doe");
+    // The committer-date prefilter keeps everything within its margin and drops older commits.
+    let recent = LogRange::new(&tip).committed_since(d("2025-02-05"));
+    assert_eq!(g.count_commits(&recent).unwrap(), 2);
+
+    assert!(g.is_ancestor(&first, &tip));
+    assert!(!g.is_ancestor(&tip, &first));
+    assert_eq!(g.suggested_branch(), "main");
+    assert_eq!(g.remote_url(), None);
+    let mut files = g.ls_tree(&tip).unwrap();
+    files.sort();
+    assert_eq!(files, ["a.ts", "b.ts", "c.ts"]);
+    assert!(g.path_exists(&tip, "b.ts"));
+    assert!(!g.path_exists(&first, "b.ts"));
+    assert_eq!(parse_version("git version 2.47.0"), Some((2, 47)));
+    assert_eq!(parse_version("git version 2.39.5 (Apple Git-154)"), Some((2, 39)));
 }

@@ -51,6 +51,11 @@ impl Identity {
         }
     }
 
+    /// The `[people]` person this email or login is listed for, if any.
+    pub fn mapped(&self, id: &str) -> Option<&str> {
+        self.by_id.get(&id.trim().to_lowercase()).map(String::as_str)
+    }
+
     pub fn resolve(&self, email: &str, name: &str) -> Author {
         let e = email.trim().to_lowercase();
         let n = name.trim().to_lowercase();
