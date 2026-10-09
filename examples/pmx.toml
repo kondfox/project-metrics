@@ -1,0 +1,43 @@
+# Example pmx project config (fictional). Schema: wiki/tool-implementation-plan.md §3.3.
+# Tokens are referenced by env-var name only; never put secrets in this file.
+
+[project]
+name = "Acme Shop"
+range_start = "2024-09-01"
+breadth_roles = ["frontend", "backend", "mobile", "qa", "infra"]
+ai_attribution = true
+
+[[repo]]
+path = "~/src/acme/shop-api"          # local clone…
+branch = "origin/development2"
+role = "backend"
+code_host_id = 785
+
+[[repo]]
+url = "git@gitlab.example.com:acme/shop-web.git"   # …or a URL pmx clones itself
+role = "frontend"
+
+[[repo]]
+path = "~/src/acme/shop-legacy"
+role = "per-file"                 # monorepo role rules for this repo only (spec §1.5)
+
+[code_host]
+type = "gitlab"
+base = "https://gitlab.example.com"
+token_env = "GL_TOKEN"
+
+[people]
+"Jane Doe" = ["jane.doe@example.com", "jdoe"]   # emails and logins together
+bots = ["gitlab-runner@example.com"]
+externals = ["Sam Contractor"]
+
+[fte]
+source = "file"                   # spec §10.2
+file = "fte.toml"
+
+[[secrets_triage]]
+repo = "shop-api"
+file = "certs/dev.pem"
+verdict = "rotated"
+by = "Jane Doe"
+date = "2026-10-08"

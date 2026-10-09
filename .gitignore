@@ -1,0 +1,22 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Web dashboard
+/web/node_modules/
+/web/dist/
+
+# pmx workspaces: never commit cache, clones or outputs (outputs contain per-person data)
+.pmx/
+out/
+
+# Local env and secrets
+.env
+.env.*
+*.pem
+*.key
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
