@@ -1,6 +1,7 @@
 # Portable metrics tool — implementation plan
 
-**Status:** PLAN, nothing built yet. Drafted 2026-10-08, revised 2026-10-09 with owner decisions.
+**Status:** M1a built (2026-10-09): the git-derived core reproduces the prototype (see
+[parity.md](parity.md) §6). M1b is next. Drafted 2026-10-08, revised 2026-10-09 with owner decisions.
 **What** to measure is defined by [metrics-spec.md](metrics-spec.md) (source of truth). This page covers
 **how** to build the tool, which runs anywhere and shows its results in a web dashboard. Where this page
 changes the spec, it says so with **⟂ spec change**. The spec must be updated to match before M1.
@@ -23,6 +24,9 @@ in the browser. A second command combines several projects into the **fleet view
 | D5 | jscpd and semgrep stay **optional external tools** in v1, not rewritten in Rust (the numbers would change) | 2026-10-09 |
 | D6 | Config format is **TOML**, with an importer for the prototype's `config_*.json` | 2026-10-09 |
 | D7 | **Open source**, dual-licensed **MIT OR Apache-2.0**, at `github.com/kondfox/project-metrics`. The repo holds the tool and this wiki. Company-specific pilot data and the Python prototype stay private | 2026-10-09 |
+| D8 | **M1 is split.** M1a = the numbers (config, classification, git ingest, per-day store, M1 metrics, `project.json`, parity). M1b = setup commands and progress/ETA. Trust the numbers before polishing usability | 2026-10-09 |
+| D9 | `project.json` keeps per-person day components (needed to recompute multi-stack, active devs and commits per dev for any range) under **pseudonymous ids** (`p1`, `p2`, …). The id → name map lives only in `private/leads.json` | 2026-10-09 |
+| D10 | The parity harness is a workspace crate (`pmx-parity`, not published) that reads the golden set from `PMX_GOLDEN_DIR` and prints to the terminal only. It runs twice: in the **prototype dialect** (the prototype's test rules and git reading) every M1 series must match exactly; in the spec dialect the intentional differences are reported | 2026-10-09 |
 
 ---
 
@@ -52,7 +56,8 @@ pmx fleet serve|export --manifest fleet.toml ──► fleet.json + fleet dashbo
 | `pm-llm` | The classifier: the shared schema (§6.1), providers, data-policy guard, cache, eval harness |
 | `pm-metrics` | Roll-ups, ratios, scores (Quality, Security, Velocity, multi-stack). No I/O. **Also compiled to WASM** for the dashboard |
 | `pm-progress` | Work planning, ETA model, renderers (TTY / plain / JSON) (§5) |
-| `pmx` (bin) | CLI (`clap`); `axum` for `serve`; dashboard bundled with `rust-embed` |
+| `pmx` (lib + bin) | Collect pipeline, `.pmx/cache.sqlite`, outputs, export; CLI (`clap`); `axum` for `serve`; dashboard bundled with `rust-embed` |
+| `pmx-parity` (bin, unpublished) | Parity harness against the private golden set (D10, [parity.md](parity.md)) |
 | `web/` | TypeScript + ECharts dashboard (the prototype already uses ECharts); loads `pm-metrics` WASM |
 
 ### 2.2 Technical choices
@@ -402,7 +407,8 @@ derived from schema answers. The rubric version bump (`six-axis@2`) invalidates 
 | # | Deliverable | Done when |
 |---|---|---|
 | **M0** | Freeze the prototype outputs for Project A, Project B and Project C at pinned SHAs as golden files (private). Write the deviation register ([parity.md](parity.md)). Update metrics-spec.md with this page's ⟂ changes | Golden set + long-format table exist; the harness runs **locally** against them (golden data is private, so public CI uses synthetic fixtures instead) |
-| **M1** | `pm-config`, `pm-classify`, `pm-git`; `init`, `repo`, `people`, `check`, `import-config`; the progress, resume and ETA framework; activity, rework, tests/docs, multi-stack and AI metrics; `project.json` + `private/leads.json` | Matches the golden files except the listed ⟂ differences |
+| **M1a** ✓ 2026-10-09 | `pm-config` (incl. the prototype-config conversion), `pm-classify`, `pm-git`, `pm-metrics`; `pmx collect` (fetch, git ingest, rework walk, per-repo cache) and `pmx export --format long`; activity, rework, tests/docs, multi-stack and AI metrics, weekly and monthly; `project.json` + `private/leads.json`; `pmx-parity` | Matches the golden files except the listed ⟂ differences. **Done:** exact in the prototype dialect for all three projects |
+| **M1b** | `init`, `repo`, `people`, `check`, `import-config` (CLI over the M1a converter, plus `fte.json` and `secrets_triage.json`); the progress, resume and ETA framework (§5), incl. incremental ingest from the last processed SHA | A new workspace set up from scratch without hand-editing TOML; Ctrl-C and resume lose at most the units in flight |
 | **M2** | Project dashboard: weekly/monthly, custom range via WASM, low-n and "not measured" states, `serve`/`export` | One project viewable end to end |
 | **M3** | `pm-snapshot`: scc, jscpd, osv-scanner, gitleaks, semgrep; Quality with duplication; Security score; SAST trend; `doctor`, `tools install` | Quality and Security reproduced for all three projects |
 | **M4** | `pm-codehost`: GitHub + GitLab; peer review, cycle time, review wait, mentoring (unified expert rule, spec §8) | Spec §8 complete |
@@ -411,8 +417,9 @@ derived from schema answers. The rubric version bump (`six-axis@2`) invalidates 
 | **M7** | Packaging, `init` wizard polish, docs | 15-minute onboarding verified by someone new |
 
 **Testing:**
-- **Synthetic fixture repos**, generated by a script with scripted authors, dates and file trees, for
-  unit and integration tests of classification, rework, pooling and identity merging.
+- **Synthetic fixture repos**, built by the tests themselves with scripted authors, dates and file trees
+  (`crates/pmx/tests/fixture.rs`, `crates/pm-git/src/tests.rs`), for classification, rework, pooling,
+  identity merging, URL clones and the cache. Public CI runs these.
 - **Golden parity files** (M0) for regression.
 - **Recorded provider responses** for classifier tests, so CI makes no live LLM calls.
 

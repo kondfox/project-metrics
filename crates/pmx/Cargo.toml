@@ -1,0 +1,28 @@
+[package]
+name = "pmx"
+description = "Engineering metrics from git history, with a web dashboard (working name)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "pmx"
+path = "src/main.rs"
+
+[dependencies]
+pm-classify.workspace = true
+pm-config.workspace = true
+pm-git.workspace = true
+pm-metrics.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

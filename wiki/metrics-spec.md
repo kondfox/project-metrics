@@ -39,6 +39,11 @@ deviates from the prototype it says so with **⟂ change vs prototype**.
   following `branch`. `meta` always records the measured tip SHA of every repo. A run with the same pinned
   SHAs, `--as-of`, config and tool versions must produce identical non-LLM output. This is what the parity
   harness ([parity.md](parity.md)) relies on. **⟂ new vs prototype.**
+- **Commit selection is by author date, in code** (decided 2026-10-09, M1a): a commit belongs to the
+  project if its author date is on or after `range_start` and on or before `as_of`. pmx does not use
+  `git log --since`: that filters on the committer date, a bare date takes the *current time of day*
+  (so results depend on when you run), and the walk stops at the first older commit. On the golden
+  repos the two selections are identical. **⟂ change vs prototype.**
 - **Default window** for headline numbers: the last **complete** month. Scores (Quality, Velocity,
   Security) are also computed per week for the trend lines.
 - **Small samples.** A week often has few events (a 3-person team may merge 5 PRs). Every ratio carries
@@ -58,7 +63,10 @@ Across a project's repos, **sum numerators and denominators**, then divide. Neve
 - **Codebase-snapshot metrics** (duplication, complexity, dependency vulns, SAST, secrets) do **not**
   filter authors — they measure the code that exists.
 - Bots: config list + pattern `\[bot\]|dependabot|renovate|github-action|semantic-release|gitlab[ -]?ci|gitlab[ -]?runner|jenkins|buildkite|^claude$|anthropic`.
-- Externals: per-project list of `{name, email}`, case-insensitive exact match on either (§7.1).
+- Bot rule detail: the pattern is matched case-insensitively against the trimmed author name and,
+  separately, the email; the `bots` list matches either exactly (case-insensitive).
+- Externals: per-project list of names and emails (`[people] externals`), case-insensitive exact match
+  on the author name, the email, or the canonical person name (§10.1).
 - Identity unification: an alias map `email → canonical person` merges a person's multiple identities
   before any per-person counting.
 - *Rework is computed codebase-wide on line content (not attributed to authors) in the prototype — keep
@@ -84,6 +92,17 @@ A path is a test if **any** holds:
 - directory segment: `/test/ /tests/ /__tests__/ /spec/ /e2e/ /cypress/ /playwright/ /androidtest/ /integration_test/ /test_driver/ /uitests/` or a .NET test project dir matching `/[^/]*\.(unit|integration|e2e)?tests?/`
 - filename: `*.test.*`, `*.spec.*`, `*.e2e-spec.*`, `*.cy.*`, `*.feature`, `test_*.py`, `*_test.py`, `conftest.py`, `*_test.go`, `*_test.dart`, `*_spec.rb`, `*Test.{java,kt,cs,swift}`, `*Tests.{java,kt,cs,swift}`, `*IT.java`
 
+Matching details (decided 2026-10-09, M1a): directory rules match any path segment; filename rules match
+the last segment only (the prototype matched `.test.`/`.spec.` anywhere in the path); the CamelCase rules
+(`*Test`, `*Tests`, `*IT`) are **case-sensitive** on the original filename, so `Latest.kt` is not a test
+(the prototype's lower-cased `endswith('test.kt')` made it one).
+
+**Co-change touches (§3.2, §3.3):** a commit "touches a test file" if any changed, **non-generated** path
+matches the test rules, whatever its extension (so `.feature` specs and fixtures under `tests/` count),
+and "touches a doc file" if any changed path is class *doc*. Class *test* above (source files only) is
+what decides prod vs test and the per-file `qa` role. **⟂ change vs prototype:** it ignored the generated
+check, so snapshot-only changes (`__snapshots__/*.snap`) counted as tests.
+
 Re-baseline tests-with-code history after this change (it will rise for repos using these conventions).
 
 **Known v1 limits (accepted):** `.html` templates, `.json/.yaml/.xml` config are not "source";
@@ -106,7 +125,17 @@ Re-baseline tests-with-code history after this change (it will rise for repos us
   `.hbs`→Handlebars, `.c/.h`→C, `.cpp`→C++, `.m/.mm`→Objective-C.
 
 ### 1.6 Commit source
-`git log <branch> --no-merges --numstat` on the configured branch per repo. Binary numstat (`-`) = 0.
+`git log <branch> --no-merges --numstat` on the configured branch (or pinned `rev`) per repo. Binary
+numstat (`-`) = 0. Reading the output (decided 2026-10-09, M1a; **⟂ fix vs prototype**):
+- **Renames** resolve to the new path (`src/{a.js => b.ts}` → `src/b.ts`). The prototype kept the
+  notation as the path, so a rename that changed or wrapped the extension made the file "not source".
+- **Paths are unquoted** (`core.quotePath=false`, C-style escapes decoded), so non-ASCII file names
+  classify normally. The prototype saw them quoted, which hid their extension.
+- **Git settings that change the output are pinned** on every call, so a user's git config can't move
+  the numbers: `core.quotePath=false diff.renames=true diff.algorithm=myers diff.indentHeuristic=true
+  diff.noprefix=false diff.mnemonicPrefix=false diff.relative=false log.showRoot=true
+  log.showSignature=false`, plus `--no-ext-diff --no-textconv` for diffs.
+- Author date = `%ad` with `--date=short` (the author's own timezone, §1.1).
 
 ### 1.7 Scores and bands
 All 0–100 scores use fixed targets (never fleet-relative) and the same bands:
@@ -144,6 +173,13 @@ renormalized** (never imputed). Always display the constituents and how many fed
   - every added line records `(file, line text) → date`;
   - a deleted line whose `(file, text)` was added **≤ 21 days** earlier counts as reworked (on the date
     of the deletion).
+- Deletion date − add date ≤ 21 days, both author dates. With out-of-order author dates the difference
+  can be negative, which counts (as in the prototype).
+- Lines are keyed by the **post-image** path: renames are not followed, and the lines of a file deleted
+  as a whole are not seen (`+++ /dev/null`). Known v1 limits, both as in the prototype.
+- The diff is parsed by its headers (`diff --git` … `@@`), so a content line that itself starts with
+  `-- ` or `++ ` (SQL comments, decrement operators) is a line. **⟂ fix vs prototype:** it took such
+  lines for file headers.
 - `rework% = Σ reworked / Σ added` (non-trivial source lines), pooled.
 - **Score — ⟂ change vs prototype (decided 2026-10-08): distance from the 15–25% band, both sides.**
   ```
@@ -216,7 +252,8 @@ Mentoring pairs (PR-based) are in §7.
 - A commit is AI-assisted if its message matches `co-authored-by: claude` (case-insensitive, anywhere).
 - **AI-assisted commits %** = AI commits ÷ commits; **AI-assisted lines %** = added source lines in AI
   commits ÷ added source lines.
-- **AI vs human comparison** (trailing 12 months from the latest commit): for each group — commits,
+- **AI vs human comparison** (the 365 days up to the latest commit on or before `as_of`, by any author,
+  bots included; both ends inclusive): for each group — commits,
   added lines, median commit size, tests-with-code %, docs-with-code % (definitions as §2/§3).
   Project-level only; never per developer.
 - Config `ai_attribution: false` (trailers stripped by policy) → hide all AI series (show "not tracked",
@@ -391,5 +428,28 @@ snapshot metrics}`; `weeks[]`, `months[]` with precomputed `series_weekly` / `se
 leaders}`; `ai_compare`; `security{snapshot}`; `hotspots[]`; `velocity{packages[] scored, with date}`;
 `meta{generated_at, as_of, repo tip SHAs, partial_week, partial_month, tool versions, rules snapshot,
 rubric version, classifier per package, constituents present}`. Per-person drill-downs (leaders, per-person
-points) go to a separate `private/leads.json`, never into the shared file. The dashboard recomputes custom ranges from `days`. The fleet view is an
+points) go to a separate `private/leads.json`, never into the shared file. The per-person day components
+in `days` (commits and lines per person, needed for multi-stack, active devs and commits per dev over any
+range) use **pseudonymous ids** (`p1`, `p2`, … by sorted name); the id → name map is only in
+`private/leads.json` (decided 2026-10-09, plan D9). The dashboard recomputes custom ranges from `days`. The fleet view is an
 aggregate of these per-project files.
+
+### 10.7 Metric ids (series and long format)
+The keys of `series_weekly` / `series_monthly` and the `metric` column of `pmx export --format long`
+([parity.md](parity.md) §1.1). `n` is the denominator stored alongside (for the low-n flag, §1.1).
+Values are unrounded; `null` means no data.
+
+| Id | Definition | `n` |
+|---|---|---|
+| `commits`, `added` | §2 | — |
+| `commit_med`, `commit_p90` | §2, linear interpolation | commits with size > 0 |
+| `commits_per_dev_med` | §2 | people with ≥ 1 commit |
+| `active_devs` | §2 (same population as §5) | — |
+| `mix_<role>` | §2 stack mix, % of added source lines; only roles with lines anywhere in the project | added source lines |
+| `rework_pct`, `s_rework` | §3.1 | non-trivial added lines (rework walk) |
+| `test_discipline_pct`, `s_tests` | §3.2 | commits touching prod |
+| `doc_discipline_pct`, `s_docs` | §3.3 | commits touching prod |
+| `quality`, `quality_constituents` | §3; the count of sub-scores that fed it (duplication arrives with snapshots) | — |
+| `multi_stack_pct`, `breadth_index`, `techs_per_dev` | §5 over the bucket | people with lines in breadth roles |
+| `ai_assist_commit_pct`, `ai_assist_line_pct` | §6; absent when `ai_attribution = false` | commits · added source lines |
+| `ai_compare_<ai\|human>_<commits\|added\|med_size\|test_pct\|doc_pct>` | §6, period `last-12m` | — |

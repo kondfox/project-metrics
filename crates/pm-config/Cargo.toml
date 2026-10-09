@@ -1,0 +1,17 @@
+[package]
+name = "pm-config"
+description = "Load and validate pmx.toml; [people] identities; prototype config importer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pm-classify.workspace = true
+chrono.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+toml.workspace = true

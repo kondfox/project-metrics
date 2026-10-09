@@ -1,6 +1,8 @@
 # project-metrics
 
-> **Status: planning.** Nothing is implemented yet. The design lives in the [wiki](wiki/README.md).
+> **Status: early development.** Milestone M1a is done: `pmx collect` computes the git-derived metrics
+> (activity, rework, tests/docs-with-code, multi-stack, AI-assisted) and reproduces the private prototype.
+> No dashboard yet. The design lives in the [wiki](wiki/README.md).
 
 A tool a developer downloads, points at their project's git repositories, and runs to get **engineering
 metrics on a web dashboard**. A **fleet view** then combines all of an organization's projects on one
@@ -25,7 +27,21 @@ Every headline drills down to a project dashboard. Scores are team-level only, n
 One-page summary: [wiki/metrics-overview.md](wiki/metrics-overview.md). Exact definitions:
 [wiki/metrics-spec.md](wiki/metrics-spec.md).
 
-## Planned design
+## Try it
+
+Needs Rust (stable) and git ≥ 2.30.
+
+```sh
+cargo build --release
+# a workspace folder with a pmx.toml (see examples/pmx.toml)
+./target/release/pmx -C ~/metrics/acme-shop collect
+./target/release/pmx -C ~/metrics/acme-shop export --format long --weekly
+```
+
+`collect` writes `out/project.json` (team level) and `out/private/leads.json` (per-person drill-downs,
+for the lead only). Setup commands (`init`, `repo`, `people`, `check`) and the dashboard come next.
+
+## Design
 
 - A single **Rust** binary (`pmx`, working name) with the dashboard embedded.
 - One workspace folder per project, listing any number of repositories, which are pooled into one project.

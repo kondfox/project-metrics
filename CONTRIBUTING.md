@@ -1,6 +1,12 @@
 # Contributing
 
-The project is in the planning phase; see [wiki/tool-implementation-plan.md](wiki/tool-implementation-plan.md).
+Plan and milestones: [wiki/tool-implementation-plan.md](wiki/tool-implementation-plan.md).
+
+- **Build and test:** `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo test --workspace`. Tests build their own fictional git repos; CI runs exactly these.
+- **Parity:** `crates/pmx-parity` compares pmx with the private prototype's golden set
+  ([wiki/parity.md](wiki/parity.md)). It needs `PMX_GOLDEN_DIR` and only runs for maintainers who have
+  the golden set. Its report goes to the terminal; never paste it into an issue or commit.
 
 - **The wiki is the design source of truth.** [wiki/metrics-spec.md](wiki/metrics-spec.md) defines what
   is measured. Change the spec in the same pull request as any code that changes a metric's behaviour.

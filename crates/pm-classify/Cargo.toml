@@ -1,0 +1,12 @@
+[package]
+name = "pm-classify"
+description = "File class, test detection, stack role and technology (spec §1.4–1.5)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+regex.workspace = true
+serde.workspace = true

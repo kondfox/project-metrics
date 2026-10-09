@@ -1,0 +1,14 @@
+[package]
+name = "pm-metrics"
+description = "Per-day components, roll-ups, ratios and scores. No I/O (also meant to compile to WASM)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pm-classify.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true

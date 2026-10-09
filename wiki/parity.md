@@ -31,8 +31,9 @@ project-a,rework_pct,2025-03,18.42,5310
 
 - `metric` uses the spec's metric ids (§3). `period` is `YYYY-MM`; snapshot metrics use the period of the
   snapshot. `n` is the denominator where the spec defines one.
-- `pmx export --format long --monthly` must emit the same table, so the harness is a plain table diff and
-  does not depend on either tool's JSON shape.
+- `pmx export --format long --monthly` emits the same table (metric ids: spec §10.7). The harness
+  (`pmx-parity`) builds it through the same library code, adding the prototype's windows where the
+  register says so, and diffs it against `metrics.csv`.
 
 ### 1.2 Inputs that drift and must be frozen
 
@@ -48,6 +49,17 @@ Pinning the git SHAs is not enough. These inputs change after the freeze:
 ---
 
 ## 2. Comparison rules
+
+- **Harness:** `PMX_GOLDEN_DIR=<golden folder> cargo run -p pmx-parity --release`. It converts each golden
+  config with the `import-config` converter, checks every pinned `rev` against the manifest, checks the
+  externals list against its manifest hash (`PMX_PROTOTYPE_TOOLS`, default `<golden>/../../tools`), runs
+  `collect` in a temporary workspace without fetch or cache, and prints the report to the terminal only.
+  Nothing from the golden set is written anywhere.
+- **Two dialects** (plan D10). The **prototype dialect** swaps in the prototype's test rules and its way
+  of reading git output (verbatim rename notation and quoted paths; diff lines starting with `--- `/`+++ `
+  taken as headers). It isolates everything else, so **every M1 series must match exactly** there; this is
+  the gate. The **spec dialect** is the real tool: only pure commit counts must still match, and the
+  deviations below are reported as deltas for review.
 
 - **Run:** `pmx collect --as-of <manifest.as_of>` with each repo pinned to `rev = <sha>`, then export the
   long format (spec §1.1, reproducible runs).
@@ -73,18 +85,17 @@ harness recomputes the expected value from the golden constituents with the spec
 
 | Metric (prototype series) | Spec | Expect | Why |
 |---|---|---|---|
-| `commits`, `added` | §2 | Exact | — |
-| `commit_med`, `commit_p90` | §2 | Exact | Truncated to integer as in the prototype |
-| `commits_per_dev_med` | §2 | Exact | — |
+| `commits`, `commits_per_dev_med`, `ai_assist_commit_pct` | §2, §6 | Exact (both dialects) | Commit counts don't depend on paths |
+| `added`, `commit_med`, `commit_p90`, `ai_assist_line_pct`, `rework_pct`, stack mix, multi-stack | §1.6, §3.1 | Exact in the prototype dialect; **differs slightly** in the spec dialect | Git-reading fixes (spec §1.6, §3.1): renames resolve to the new path, non-ASCII paths are unquoted, diff content lines starting with `-- ` are lines. Files the prototype misread as "not source" now count. Commit sizes are truncated to integer as in the prototype |
 | `mix_*` (stack mix) | §1.5, §2 | Exact for single-role repos. May differ for `per-file` repos | Test-detection fix moves some files into `qa` |
 | `rework_pct` | §3.1 | Exact | — |
 | `s_rework` / Quality | §3.1, §3 | Recompute | Rework score is now two-sided (15–25% band) |
-| `test_discipline_pct` | §3.2 | **Differs, usually upward** | Test-detection fix (Python/Go/.NET/Swift/Dart/Ruby conventions). Harness reports the delta per repo; a drop needs investigation |
+| `test_discipline_pct` | §3.2 | **Differs, usually upward** | Test-detection fix (Python/Go/.NET/Swift/Dart/Ruby conventions). Harness reports the delta per repo; a drop needs investigation. The drops seen in M1a came from the rename fix (renamed source files now count as prod, which grows the denominator), not from the test rules |
 | `doc_discipline_pct` | §3.3 | Near-exact | Doc rules unchanged, but the denominator (commits touching prod) shrinks when files become tests |
 | `multi_stack_pct`, `breadth_index`, `techs_per_dev` | §5 | Exact **when `pmx` is queried for the prototype's window** | Prototype uses a trailing 90-day window ending at the first day of the next month (exclusive); the spec uses the selected range. The harness queries `pmx` with that 90-day range per month |
 | `active_devs` | §2 | Exact with the same 90-day query | Prototype counts people in the multi-stack leaders list of that window |
 | `ai_assist_commit_pct`, `ai_assist_line_pct` | §6 | Exact | Not emitted when `ai_attribution = false` (both sides) |
-| `ai_compare` | §6 | Exact **if** the latest commit ≤ `as_of` | Prototype's 12-month window ends at the latest commit in any repo, even past its last month. The spec ends it at `as_of` |
+| `ai_compare` | §6 | Exact **if** the latest commit ≤ `as_of` | Prototype's 12-month window ends at the latest commit in any repo, even past its last month. The spec ends it at the latest commit on or before `as_of` |
 | Security counts (critical/high/moderate/low, top packages) | §7.1 | Exact with the frozen OSV database | Prototype scans branch tips at run time; the golden run uses the pinned SHAs |
 | Security score | §7.3 | Recompute | — |
 | `pr_count`, `pr_cycle_median_h`, `review_wait_median_h`, `review_coverage_pct` | §8 | Exact for repos without external PR authors | Spec excludes externals in the PR layer; the prototype did not |
@@ -122,10 +133,11 @@ The input for `pmx classifier eval` (plan §6.5). Built once per freeze, private
   the same packages and compared per axis (quadratic-weighted κ) and on points.
 - Client code goes only to providers its data policy allows. The reference model is itself a provider.
 
-## 6. Freeze log
+## 6. Freeze and run log
 
-| Freeze | Result |
+| Date | Result |
 |---|---|
+| 2026-10-09 | **M1a parity run** against the 2026-10-09 golden set, all three projects, every M1 series (activity, commit size, commits per dev, stack mix, rework, tests/docs-with-code, multi-stack and active devs over the prototype's 90-day window, AI-assisted, AI vs human). **Prototype dialect: exact everywhere**, except the AI comparison of the one project whose tip is after `as_of` (expected, §3). Spec dialect: commit counts exact; every other delta traced to a listed deviation. Two findings became spec fixes: the prototype's rename and quoted-path reading (spec §1.6) and its rework diff parser (spec §3.1). Each project runs in under 10 s. |
 | 2026-10-09 | **Dependency scan for the third project:** its prototype config listed no lockfiles (an older result had been carried over to save a rescan), so the golden config adds its one lockfile. The carried-over figure was stale: a dependency-upgrade sweep two days before the freeze had removed every critical. Lesson for the tool: never carry a security snapshot over from an older run; auto-discover lockfiles (spec §10.1). |
 | 2026-10-09 | **Snapshots:** duplication, complexity, SAST, secrets and hotspots frozen for 13 month-ends per project. Three projects scanned in parallel caused semgrep rule timeouts in two scans; re-run serially, every SAST count reproduced on a repeat run. An earlier unpinned run disagreed for three months of one project, which is why runs must be pinned. **Velocity reference:** 240 packages (80 per project, stratified by month × ticketed) scored by Claude Opus against `six-axis@1`. One `author~week` id occurred in two projects, hence project-scoped ids (spec §10.3). |
 | 2026-10-09 | Re-running the prototype at pinned SHAs reproduced every git-derived series of the previous run (2026-09-13) exactly for all months before the last two. Security re-frozen from raw scanner output. PR/MR flow frozen for all three projects; every PR series matched the previous run except mentoring pairs. Snapshot metrics (duplication, complexity, SAST, secrets) and the Velocity golden set are still pending |
