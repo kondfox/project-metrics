@@ -43,7 +43,7 @@ Pinning the git SHAs is not enough. These inputs change after the freeze:
 | OSV vulnerability database | Store the **raw `osv-scanner` JSON** per (repo, lockfile) at the pinned SHA. `pmx` replays it through its parser, so parity tests our counting, not the database. (The first freeze showed why: one project's open criticals went 45 → 79 in four weeks with no code change.) |
 | Code-host PR/MR data | Store the raw API responses (GitLab: every page and per-MR notes, keyed by request path; GitHub: the `gh pr list --json` export, fetched month by month to avoid GraphQL timeouts). `pmx` replays them through a fixture code-host adapter |
 | FTE values | Copy the FTE file into the golden set |
-| Velocity scores | Not part of parity. They go through `pmx classifier eval` (plan §6.5) |
+| Velocity scores | Not part of parity. They go through `pmx classifier eval` (plan §6.5) against the reference set (§5) |
 
 ---
 
@@ -57,6 +57,9 @@ Pinning the git SHAs is not enough. These inputs change after the freeze:
 - **Rounding:** the prototype rounds before storing (percentages to 0.1 or 0.01; commit sizes truncated to
   integers). Compare after applying the **prototype's** rounding to the `pmx` value. Any other difference
   fails.
+- **Snapshot SHAs:** a month-end snapshot is the last commit with committer date before the 1st of the next
+  month, reachable from the pinned SHA (`git rev-list -1 --before=…`).
+- **KLOC:** scc on an exported tree is not bit-stable; allow ±0.1 KLOC (and the ratios derived from it).
 - **Percentiles:** the prototype uses linear interpolation (numpy default) and then truncates to an integer.
   The spec adopts linear interpolation; truncation is a prototype display artifact.
 - **Each failure is either a bug or a new entry in §3.** Never widen a tolerance to make a run pass.
@@ -87,7 +90,7 @@ harness recomputes the expected value from the golden constituents with the spec
 | `pr_count`, `pr_cycle_median_h`, `review_wait_median_h`, `review_coverage_pct` | §8 | Exact for repos without external PR authors | Spec excludes externals in the PR layer; the prototype did not |
 | `mentoring_pairs` | §8 | **Differs** | Expert rule unified across GitHub and GitLab |
 | `fix_pct`, `cfr_pct`, `single_author_file_pct`, `new_stack_entries` | §9 | Not compared | Placeholder zeros in the prototype; dropped from the tool |
-| Velocity (monthly points) | §4 | Not compared | Package date rule changed (last commit, not modal month) and classifier changed. Covered by `classifier eval` |
+| Velocity (monthly points) | §4 | Not compared | Package date rule changed (last commit, not modal month) and classifier changed. Covered by `classifier eval` against the reference set (§5) |
 | Duplication, complexity, hotspots, SAST, secrets | §3.4, §3.5, §7 | Exact at the same SHA and tool versions | Snapshot cadence differs (week-end + month-end vs month-end), so only month-end snapshots are compared |
 | Weekly series | §1.1 | No prototype counterpart | Validated with synthetic fixtures (M1) |
 
@@ -107,8 +110,21 @@ harness recomputes the expected value from the golden constituents with the spec
 - `gh pr list --json files` returns at most 100 files per PR; the prototype's GitHub mentoring stack uses
   that truncated list.
 
-## 5. Freeze log
+## 5. Velocity reference set
+
+The input for `pmx classifier eval` (plan §6.5). Built once per freeze, privately:
+- Extract work packages at the pinned SHAs for the last 12 months before `as_of`.
+- Draw a **stratified sample**: 80 packages per project, proportional over (month × ticketed/author-week)
+  strata, fixed seed.
+- Score with a **strong reference model** against the frozen rubric version (`six-axis@1`), in batches, with
+  ids echoed verbatim and validated. Record model, rubric version and date.
+- Candidate classifiers (smaller models, local models, Jev where the code may leave the machine) are scored on
+  the same packages and compared per axis (quadratic-weighted κ) and on points.
+- Client code goes only to providers its data policy allows. The reference model is itself a provider.
+
+## 6. Freeze log
 
 | Freeze | Result |
 |---|---|
+| 2026-10-09 | **Snapshots:** duplication, complexity, SAST, secrets and hotspots frozen for 13 month-ends per project. Three projects scanned in parallel caused semgrep rule timeouts in two scans; re-run serially, every SAST count reproduced on a repeat run. An earlier unpinned run disagreed for three months of one project, which is why runs must be pinned. **Velocity reference:** 240 packages (80 per project, stratified by month × ticketed) scored by Claude Opus against `six-axis@1`. One `author~week` id occurred in two projects, hence project-scoped ids (spec §10.3). |
 | 2026-10-09 | Re-running the prototype at pinned SHAs reproduced every git-derived series of the previous run (2026-09-13) exactly for all months before the last two. Security re-frozen from raw scanner output. PR/MR flow frozen for all three projects; every PR series matched the previous run except mentoring pairs. Snapshot metrics (duplication, complexity, SAST, secrets) and the Velocity golden set are still pending |

@@ -265,6 +265,10 @@ scannable lockfile.
   `(repo, rule, file)`; **suppression markers** count (`nosemgrep`, `# nosec`, `NOSONAR`,
   `gitleaks:allow`, security `eslint-disable`, `@SuppressWarnings("squid…`).
 - Reuse the previous snapshot's result when a repo's SHA is unchanged.
+- **Rule timeouts make a scan incomplete.** semgrep drops rules that time out, so counts would depend on
+  machine load. Retry the scan once; if timeouts persist, store the snapshot as *incomplete* and show the
+  value as "not measured" rather than a lower count. Run snapshot scans with bounded parallelism.
+  (Found in M0.)
 
 ---
 
@@ -349,7 +353,10 @@ schema for every provider. Design: [tool-implementation-plan.md §6](tool-implem
 - **Output per package (unchanged contract):** `{ "id": <verbatim>, "R1".."R6": 0–3, "description" }`,
   derived from the answers in code. `description` = ticket id + first commit subject. The tool computes
   sum/size/points itself.
-- **Cache key:** `(package id, diff hash, rubric version, provider, model version)`. Pin versioned model
+- **Package ids are project-scoped.** An `author~ISO-week` id (and even a ticket id) can repeat across
+  projects, so anything that crosses projects (fleet roll-ups, `classifier eval` sets) keys packages on
+  `(project, id)`. Found in the M0 reference sample.
+- **Cache key:** `(project, package id, diff hash, rubric version, provider, model version)`. Pin versioned model
   ids. Only new or changed packages are scored.
 - **Low confidence:** re-ask once with reordered levels; then the configured fallback (if the data policy
   allows), flagged in the output.
