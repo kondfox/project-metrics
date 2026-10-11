@@ -3,6 +3,7 @@
 //! [`pm_metrics::snapshot::RepoSummary`]. Raw results don't depend on classification settings, so
 //! they can be cached per tool and commit.
 
+pub mod bundled;
 pub mod raw;
 pub mod run;
 pub mod summarize;

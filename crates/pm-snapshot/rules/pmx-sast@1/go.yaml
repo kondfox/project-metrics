@@ -1,0 +1,93 @@
+# pmx-sast@1 — Go. Original rules, MIT OR Apache-2.0 (see README.md).
+rules:
+  - id: pmx-go-sql-injection
+    languages: [go]
+    severity: ERROR
+    # Migrations interpolate developer-chosen constants into DDL; not an injection surface.
+    paths:
+      exclude:
+        - "**/migration/**"
+        - "**/migrations/**"
+        - "**/Migrations/**"
+        - "**/db/migrate/**"
+        - "**/alembic/versions/**"
+        - "**/*Migration*"
+        - "**/*migration*"
+    message: >-
+      SQL is built with Sprintf or concatenation. Pass values as query arguments
+      (db.Query("... WHERE id = ?", id), or numbered placeholders) so they can't change the query.
+    metadata:
+      category: security
+      cwe: ["CWE-89: SQL Injection"]
+      confidence: MEDIUM
+      references: ["https://go.dev/doc/database/sql-injection"]
+      license: MIT OR Apache-2.0
+    patterns:
+      - pattern-either:
+          - pattern: $DB.$Q($ARG, ...)
+          - pattern: $DB.$Q($CTX, $ARG, ...)
+      - metavariable-regex:
+          metavariable: $Q
+          regex: ^(?:Query|QueryRow|Exec|QueryContext|QueryRowContext|ExecContext|Raw|Prepare|PrepareContext)$
+      # A literal joined with `+`, or fmt.Sprintf: values are spliced into the SQL.
+      - metavariable-regex:
+          metavariable: $ARG
+          regex: (?s)^(?:".*"\s*\+.*|`.*`\s*\+.*|fmt\.Sprintf\(.*)$
+      - metavariable-regex:
+          metavariable: $ARG
+          regex: (?is).*\b(?:select|insert|update|delete|create|drop|alter|where)\b
+
+  - id: pmx-go-tls-insecure-skip-verify
+    languages: [go]
+    severity: ERROR
+    message: >-
+      InsecureSkipVerify turns off certificate checks, so any server can impersonate the real one.
+      Add the right root CAs (RootCAs) instead.
+    metadata:
+      category: security
+      cwe: ["CWE-295: Improper Certificate Validation"]
+      confidence: HIGH
+      license: MIT OR Apache-2.0
+    pattern-either:
+      - pattern: "tls.Config{..., InsecureSkipVerify: true, ...}"
+      - pattern: $CFG.InsecureSkipVerify = true
+
+  - id: pmx-go-command-injection
+    languages: [go]
+    severity: ERROR
+    message: >-
+      A shell runs a command built from a non-literal. Run the program directly with separate
+      arguments (exec.Command("git", "log", name)) so input can't add commands.
+    metadata:
+      category: security
+      cwe: ["CWE-78: OS Command Injection"]
+      confidence: HIGH
+      license: MIT OR Apache-2.0
+    patterns:
+      - pattern-either:
+          - pattern: exec.Command("$SH", "-c", $CMD)
+          - pattern: exec.CommandContext($CTX, "$SH", "-c", $CMD)
+      - metavariable-regex:
+          metavariable: $SH
+          regex: ^(?:sh|bash|zsh|/bin/sh|/bin/bash|cmd|cmd\.exe|powershell)$
+      - metavariable-pattern:
+          metavariable: $CMD
+          patterns:
+            - pattern-not: '"..."'
+
+  - id: pmx-go-weak-hash
+    languages: [go]
+    severity: INFO
+    message: >-
+      MD5 and SHA-1 are broken for security purposes. Fine for checksums of trusted data; for
+      passwords use bcrypt/argon2, for signatures SHA-256 or better.
+    metadata:
+      category: security
+      cwe: ["CWE-328: Use of Weak Hash"]
+      confidence: LOW
+      license: MIT OR Apache-2.0
+    pattern-either:
+      - pattern: md5.New()
+      - pattern: md5.Sum(...)
+      - pattern: sha1.New()
+      - pattern: sha1.Sum(...)

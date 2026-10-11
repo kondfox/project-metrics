@@ -1,0 +1,73 @@
+# pmx-sast@1 — C#. Original rules, MIT OR Apache-2.0 (see README.md).
+rules:
+  - id: pmx-cs-sql-injection
+    languages: [csharp]
+    severity: ERROR
+    # Migrations interpolate developer-chosen constants into DDL; not an injection surface.
+    paths:
+      exclude:
+        - "**/migration/**"
+        - "**/migrations/**"
+        - "**/Migrations/**"
+        - "**/db/migrate/**"
+        - "**/alembic/versions/**"
+        - "**/*Migration*"
+        - "**/*migration*"
+    message: >-
+      SQL is built by concatenation or interpolation. Use parameters (SqlParameter,
+      FromSqlInterpolated / ExecuteSqlInterpolated) so values can't change the query.
+    metadata:
+      category: security
+      cwe: ["CWE-89: SQL Injection"]
+      confidence: MEDIUM
+      references: ["https://learn.microsoft.com/ef/core/querying/sql-queries"]
+      license: MIT OR Apache-2.0
+    patterns:
+      # ADO.NET commands, and EF Core's raw-SQL entry points.
+      - pattern-either:
+          - pattern: new SqlCommand($Q, ...)
+          - patterns:
+              - pattern: $DB.$RAW($Q, ...)
+              - metavariable-regex:
+                  metavariable: $RAW
+                  regex: ^(?:FromSqlRaw|ExecuteSqlRaw|ExecuteSqlRawAsync|SqlQueryRaw|ExecuteSqlCommand)$
+      # The query text is concatenated or interpolated, and looks like SQL.
+      - metavariable-regex:
+          metavariable: $Q
+          regex: (?is)^(?:\$@?".*\{|".*"\s*\+).*$
+      - metavariable-regex:
+          metavariable: $Q
+          regex: (?is).*\b(?:select|insert|update|delete|create|drop|alter|where)\b
+
+  - id: pmx-cs-binaryformatter
+    languages: [csharp]
+    severity: ERROR
+    message: >-
+      BinaryFormatter (and NetDataContractSerializer, LosFormatter) deserialization can run code
+      and is obsolete. Use System.Text.Json or another data-only format.
+    metadata:
+      category: security
+      cwe: ["CWE-502: Deserialization of Untrusted Data"]
+      confidence: HIGH
+      references: ["https://learn.microsoft.com/dotnet/standard/serialization/binaryformatter-security-guide"]
+      license: MIT OR Apache-2.0
+    pattern-either:
+      - pattern: new BinaryFormatter()
+      - pattern: new NetDataContractSerializer()
+      - pattern: new LosFormatter()
+
+  - id: pmx-cs-tls-validation-disabled
+    languages: [csharp]
+    severity: ERROR
+    message: >-
+      A certificate validation callback that always returns true accepts any server. Fix the trust
+      store instead.
+    metadata:
+      category: security
+      cwe: ["CWE-295: Improper Certificate Validation"]
+      confidence: HIGH
+      license: MIT OR Apache-2.0
+    pattern-either:
+      - pattern: "$H.ServerCertificateCustomValidationCallback = ($A, $B, $C, $D) => true"
+      - pattern: "ServicePointManager.ServerCertificateValidationCallback = ($A, $B, $C, $D) => true"
+      - pattern: HttpClientHandler.DangerousAcceptAnyServerCertificateValidator

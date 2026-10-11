@@ -318,11 +318,14 @@ Flagged `~` (point-in-time; no remediation-age data). Coverage is a lower bound 
 scannable lockfile.
 
 ### 7.4 Own-code SAST (project dashboard, trend only — never ranked)
-- `semgrep scan --metrics=off --json` with a **pinned local ruleset** on each snapshot tree. The rules are
-  configured per project (`[snapshots] sast_rules`, files or folders of YAML); without rules SAST is "not
-  measured". **Open (2026-10-09, M3):** no bundled default yet. The Semgrep registry rules can't be
-  redistributed, and the Opengrep rules fork turned out to be LGPL-2.1 **with the Commons Clause** (no
-  selling), which isn't open source either (plan §9).
+- `semgrep scan --metrics=off --json` with a **pinned local ruleset** on each snapshot tree. By default the
+  bundled **`pmx-sast@1`** rules (decided 2026-10-11): 34 original rules, MIT OR Apache-2.0, in
+  `crates/pm-snapshot/rules/pmx-sast@1/` with tests, covering injection (SQL, command, eval), unsafe
+  deserialization, disabled TLS checks, XSS sinks, open redirects, weak hashes and public cloud storage
+  across JS/TS/React, Python, Go, Java, Kotlin/Android, C# and Terraform. SQL rules skip database
+  migrations. `[snapshots] sast_rules` replaces them (`["bundled", "path"]` adds to them, `[]` turns SAST
+  off). Any rule change is a new version; `meta.tool_versions.sast_rules` records the set. (The Semgrep
+  registry rules can't be redistributed, and the Opengrep rules fork is LGPL-2.1 with the Commons Clause.)
 - Findings in non-test paths, bucketed `ERROR/HIGH/CRITICAL → high`, `WARNING/MEDIUM → medium`,
   `INFO/LOW → low`. Also: findings per KLOC (whole-tree `scc` code lines, in KLOC to 0.1 per repo:
   `sast_kloc`); **new / fixed** (`null` for the first snapshot of a series) vs the previous snapshot of the same cadence keyed by the multiset of
@@ -388,7 +391,7 @@ setup commands: [tool-implementation-plan.md §3](tool-implementation-plan.md#3-
 | `[code_host]` `type`, `base`, `token_env` | Tokens only by env-var name, never inline |
 | `[fte]` | FTE provider (§10.2): `source = "static"` with `value` or dated `periods = [{from, to?, fte}]`, or `source = "file"` with `file` (the JSON below) |
 | `[[secrets_triage]]` | `repo, file, rule?, verdict (false-positive · rotated · accepted), by, date` |
-| `[snapshots]` | `cadence` (`weekly` · `monthly`), `sast_rules` (semgrep rule files or folders), `since` (first date to scan), `jobs` (trees scanned at once, default 2), `enabled` |
+| `[snapshots]` | `cadence` (`weekly` · `monthly`), `sast_rules` (unset = bundled `pmx-sast@1`; semgrep rule files or folders; `"bundled"` adds the bundled set; `[]` = off), `since` (first date to scan), `jobs` (trees scanned at once, default 2), `enabled` |
 | `[classifiers.<name>]`, `[velocity] classifier` | LLM classifiers (§10.3) |
 
 ### 10.2 FTE provider (external source, stub in v1)
@@ -444,7 +447,7 @@ schema for every provider. Design: [tool-implementation-plan.md §6](tool-implem
 | jscpd | duplication | 4.3.0 via `npx` | `s_dup` dropped from Quality |
 | osv-scanner | dependency vulns | 2.5.1 (`scan source`) | Security score not measured |
 | gitleaks | secrets | 8.30.1 (`dir`) | secrets gate off, secrets not measured |
-| semgrep | own-code SAST | 1.179.0 + configured rules | SAST panels "not measured" |
+| semgrep | own-code SAST | 1.179.0 + `pmx-sast@1` (bundled) | SAST panels "not measured" |
 
 Versions are the ones results are pinned to (decided 2026-10-09, M3). Other versions run, with a warning
 that counts may differ from other machines; `meta.tool_versions` records what ran. `pmx tools install`

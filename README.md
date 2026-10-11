@@ -24,6 +24,7 @@ pmx people                   # who is who across repos; --apply writes [people]
 pmx check                    # paths, branches, tokens, unmapped identities
 pmx doctor                   # which snapshot tools are installed
 pmx tools install            # pinned scc, osv-scanner, gitleaks (checksum-verified)
+                             # SAST uses pmx's own bundled rules (crates/pm-snapshot/rules)
 pmx plan                     # what collect would do, and how long it should take
 pmx collect                  # progress + ETA; Ctrl-C and re-run to resume
 pmx serve --open             # the dashboard at http://127.0.0.1:7878 (includes the private lead view)

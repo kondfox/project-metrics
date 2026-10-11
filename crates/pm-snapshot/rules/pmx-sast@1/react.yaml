@@ -1,0 +1,35 @@
+# pmx-sast@1 — React (JSX/TSX). Original rules, MIT OR Apache-2.0 (see README.md).
+rules:
+  - id: pmx-react-dangerous-html
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      dangerouslySetInnerHTML renders a non-literal as HTML. If it contains user data this is
+      cross-site scripting. Render text, or sanitize (e.g. DOMPurify) right here.
+    metadata:
+      category: security
+      cwe: ["CWE-79: Cross-site Scripting"]
+      confidence: MEDIUM
+      references: ["https://react.dev/reference/react-dom/components/common#dangerously-setting-the-inner-html"]
+      license: MIT OR Apache-2.0
+    patterns:
+      - pattern: "<$EL dangerouslySetInnerHTML={{__html: $X}} />"
+      - pattern-not: '<$EL dangerouslySetInnerHTML={{__html: "..."}} />'
+      - pattern-not: "<$EL dangerouslySetInnerHTML={{__html: $S.sanitize(...)}} />"
+      - pattern-not: "<$EL dangerouslySetInnerHTML={{__html: sanitize(...)}} />"
+      # CSS in a <style> element is not the HTML-injection risk this rule is about.
+      - pattern-not: "<style dangerouslySetInnerHTML={{__html: $X}} />"
+
+  - id: pmx-react-javascript-url
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      A link target from a variable can be a javascript: URL, which runs code when clicked. Allow
+      only http(s) and relative URLs.
+    metadata:
+      category: security
+      cwe: ["CWE-79: Cross-site Scripting"]
+      confidence: LOW
+      license: MIT OR Apache-2.0
+    patterns:
+      - pattern: '<a href={"javascript:" + $X} />'

@@ -201,7 +201,7 @@ export const NOT_MEASURED = {
   hotspots: { label: "Hotspots", needs: "scc: `pmx tools install`" },
   dependency_vulnerabilities: { label: "Security", needs: "osv-scanner: `pmx tools install`" },
   secrets: { label: "Live secrets", needs: "gitleaks: `pmx tools install`" },
-  sast: { label: "SAST", needs: "semgrep and `[snapshots] sast_rules`: see `pmx doctor`" },
+  sast: { label: "SAST", needs: "semgrep (rules are bundled): see `pmx doctor`" },
 } as const;
 
 export type NotMeasuredId = keyof typeof NOT_MEASURED;

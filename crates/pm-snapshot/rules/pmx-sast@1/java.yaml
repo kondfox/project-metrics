@@ -1,0 +1,79 @@
+# pmx-sast@1 — Java. Original rules, MIT OR Apache-2.0 (see README.md).
+rules:
+  - id: pmx-java-sql-injection
+    languages: [java]
+    severity: ERROR
+    # Migrations interpolate developer-chosen constants into DDL; not an injection surface.
+    paths:
+      exclude:
+        - "**/migration/**"
+        - "**/migrations/**"
+        - "**/Migrations/**"
+        - "**/db/migrate/**"
+        - "**/alembic/versions/**"
+        - "**/*Migration*"
+        - "**/*migration*"
+    message: >-
+      SQL (or JPQL) is built by concatenation. Use a PreparedStatement / query parameters
+      (setParameter) so values can't change the query.
+    metadata:
+      category: security
+      cwe: ["CWE-89: SQL Injection"]
+      confidence: MEDIUM
+      references: ["https://cheatsheetseries.owasp.org/cheatsheets/Query_Parameterization_Cheat_Sheet.html"]
+      license: MIT OR Apache-2.0
+    patterns:
+      - pattern: $S.$Q($ARG, ...)
+      - metavariable-regex:
+          metavariable: $Q
+          regex: ^(?:executeQuery|executeUpdate|execute|addBatch|prepareStatement|createQuery|createNativeQuery|query|queryForList|queryForObject|update)$
+      # The query text is a literal joined with `+`, or String.format: values are spliced in.
+      - metavariable-regex:
+          metavariable: $ARG
+          regex: (?s)^(?:".*"\s*\+.*|String\.format\(\s*".*)$
+      - metavariable-regex:
+          metavariable: $ARG
+          regex: (?is).*\b(?:select|insert|update|delete|create|drop|alter|where)\b
+
+  - id: pmx-java-command-injection
+    languages: [java]
+    severity: ERROR
+    message: >-
+      A command is run from a non-literal string. Use ProcessBuilder with separate arguments, and
+      never pass input to a shell (sh -c).
+    metadata:
+      category: security
+      cwe: ["CWE-78: OS Command Injection"]
+      confidence: MEDIUM
+      license: MIT OR Apache-2.0
+    patterns:
+      - pattern: Runtime.getRuntime().exec($CMD, ...)
+      - pattern-not: Runtime.getRuntime().exec("...", ...)
+
+  - id: pmx-java-unsafe-deserialization
+    languages: [java]
+    severity: WARNING
+    message: >-
+      Java deserialization of untrusted bytes can run code (gadget chains). Use a data format
+      (JSON) or an ObjectInputFilter allow list.
+    metadata:
+      category: security
+      cwe: ["CWE-502: Deserialization of Untrusted Data"]
+      confidence: MEDIUM
+      license: MIT OR Apache-2.0
+    pattern: new ObjectInputStream(...).readObject()
+
+  - id: pmx-java-tls-trust-all
+    languages: [java]
+    severity: ERROR
+    message: >-
+      A HostnameVerifier that accepts every host turns off TLS identity checks. Use the default
+      verifier.
+    metadata:
+      category: security
+      cwe: ["CWE-295: Improper Certificate Validation"]
+      confidence: HIGH
+      license: MIT OR Apache-2.0
+    pattern-either:
+      - pattern: "($S, $SESSION) -> true"
+      - pattern: NoopHostnameVerifier.INSTANCE

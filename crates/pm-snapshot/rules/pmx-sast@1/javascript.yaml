@@ -1,0 +1,252 @@
+# pmx-sast@1 — JavaScript / TypeScript. Original rules, MIT OR Apache-2.0 (see README.md).
+rules:
+  - id: pmx-js-eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Code built from a non-literal is evaluated. If any part comes from input, an attacker can run
+      code. Parse data instead (JSON.parse) or dispatch through a fixed table of functions.
+    metadata: &meta-injection
+      category: security
+      cwe: ["CWE-95: Eval Injection"]
+      confidence: HIGH
+      references: ["https://cheatsheetseries.owasp.org/cheatsheets/Injection_Prevention_Cheat_Sheet.html"]
+      license: MIT OR Apache-2.0
+    pattern-either:
+      - patterns:
+          - pattern: eval($X)
+          - pattern-not: eval("...")
+      - patterns:
+          - pattern-either:
+              - pattern: new Function(..., $X)
+              - pattern: Function(..., $X)
+          - pattern-not: new Function(..., "...")
+          - pattern-not: Function(..., "...")
+      - patterns:
+          - pattern-either:
+              - pattern: setTimeout($X, ...)
+              - pattern: setInterval($X, ...)
+          - metavariable-pattern:
+              metavariable: $X
+              patterns:
+                - pattern: '"..." + $Y'
+
+  - id: pmx-js-command-injection
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      A shell command is built from a non-literal. Use execFile/spawn with an argument array (no
+      shell) so input can't add commands.
+    metadata:
+      category: security
+      cwe: ["CWE-78: OS Command Injection"]
+      confidence: HIGH
+      references: ["https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html"]
+      license: MIT OR Apache-2.0
+    patterns:
+      - pattern-either:
+          - pattern: require("child_process").$EXEC($CMD, ...)
+          - pattern: require("node:child_process").$EXEC($CMD, ...)
+          # Named imports: exec(...)
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      import { ..., $EXEC, ... } from "child_process";
+                      ...
+                  - pattern-inside: |
+                      import { ..., $EXEC, ... } from "node:child_process";
+                      ...
+                  - pattern-inside: |
+                      const { ..., $EXEC, ... } = require("child_process");
+                      ...
+                  - pattern-inside: |
+                      const { ..., $EXEC, ... } = require("node:child_process");
+                      ...
+              - pattern: $EXEC($CMD, ...)
+          # Module objects: cp.exec(...)
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      import * as $CP from "child_process";
+                      ...
+                  - pattern-inside: |
+                      import * as $CP from "node:child_process";
+                      ...
+                  - pattern-inside: |
+                      import $CP from "child_process";
+                      ...
+                  - pattern-inside: |
+                      import $CP from "node:child_process";
+                      ...
+                  - pattern-inside: |
+                      $CP = require("child_process");
+                      ...
+                  - pattern-inside: |
+                      $CP = require("node:child_process");
+                      ...
+              - pattern: $CP.$EXEC($CMD, ...)
+      - metavariable-regex:
+          metavariable: $EXEC
+          regex: ^(?:exec|execSync)$
+      - metavariable-pattern:
+          metavariable: $CMD
+          patterns:
+            - pattern-not: '"..."'
+
+  - id: pmx-js-sql-injection
+    languages: [javascript, typescript]
+    severity: ERROR
+    # Migrations interpolate developer-chosen constants into DDL; not an injection surface.
+    paths:
+      exclude:
+        - "**/migration/**"
+        - "**/migrations/**"
+        - "**/Migrations/**"
+        - "**/db/migrate/**"
+        - "**/alembic/versions/**"
+        - "**/*Migration*"
+        - "**/*migration*"
+    message: >-
+      SQL is built by concatenating or interpolating values. Pass them as query parameters
+      (placeholders), or use the query builder's parameterized form.
+    metadata:
+      category: security
+      cwe: ["CWE-89: SQL Injection"]
+      confidence: MEDIUM
+      references: ["https://cheatsheetseries.owasp.org/cheatsheets/Query_Parameterization_Cheat_Sheet.html"]
+      license: MIT OR Apache-2.0
+    patterns:
+      - pattern: $DB.$QUERY($ARG, ...)
+      - metavariable-regex:
+          metavariable: $QUERY
+          regex: ^(?:query|execute|raw|run|all|get|exec)$
+      # A literal joined with `+`, or a template literal with an interpolation.
+      - metavariable-regex:
+          metavariable: $ARG
+          regex: (?s)^(?:["'].*["']\s*\+.*|`.*\$\{.*)$
+      - metavariable-regex:
+          metavariable: $ARG
+          regex: (?is).*\b(?:select|insert|update|delete|create|drop|alter|where)\b
+    # Prisma's *Unsafe APIs take raw SQL by design.
+  - id: pmx-js-prisma-raw-unsafe
+    languages: [javascript, typescript]
+    severity: ERROR
+    # Migrations interpolate developer-chosen constants into DDL; not an injection surface.
+    paths:
+      exclude:
+        - "**/migration/**"
+        - "**/migrations/**"
+        - "**/Migrations/**"
+        - "**/db/migrate/**"
+        - "**/alembic/versions/**"
+        - "**/*Migration*"
+        - "**/*migration*"
+    message: >-
+      $queryRawUnsafe / $executeRawUnsafe run the string as SQL. Use the tagged-template $queryRaw`...`
+      (or Prisma.sql), which parameterizes interpolated values.
+    metadata:
+      category: security
+      cwe: ["CWE-89: SQL Injection"]
+      confidence: HIGH
+      references: ["https://www.prisma.io/docs/orm/prisma-client/using-raw-sql/raw-queries"]
+      license: MIT OR Apache-2.0
+    patterns:
+      - pattern-either:
+          - pattern: $P.$queryRawUnsafe($SQL, ...)
+          - pattern: $P.$executeRawUnsafe($SQL, ...)
+      - pattern-not: $P.$queryRawUnsafe("...", ...)
+      - pattern-not: $P.$executeRawUnsafe("...", ...)
+
+  - id: pmx-js-dom-xss
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      HTML is written from a non-literal. If it contains user data this is cross-site scripting.
+      Set textContent, or sanitize (e.g. DOMPurify) right before writing.
+    metadata:
+      category: security
+      cwe: ["CWE-79: Cross-site Scripting"]
+      confidence: MEDIUM
+      references: ["https://cheatsheetseries.owasp.org/cheatsheets/DOM_based_XSS_Prevention_Cheat_Sheet.html"]
+      license: MIT OR Apache-2.0
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: $EL.innerHTML = $X
+              - pattern: $EL.outerHTML = $X
+              - pattern: $EL.insertAdjacentHTML($POS, $X)
+              - pattern: document.write($X)
+              - pattern: document.writeln($X)
+          - pattern-not: $EL.innerHTML = "..."
+          - pattern-not: $EL.outerHTML = "..."
+          - pattern-not: $EL.insertAdjacentHTML($POS, "...")
+          - pattern-not: document.write("...")
+          - pattern-not: document.writeln("...")
+          - pattern-not: $EL.innerHTML = $SANITIZER.sanitize(...)
+          - pattern-not: $EL.innerHTML = sanitize(...)
+
+  - id: pmx-js-tls-verification-disabled
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      TLS certificate checks are turned off, so any server can impersonate the real one. Fix the
+      trust store (e.g. NODE_EXTRA_CA_CERTS) instead.
+    metadata:
+      category: security
+      cwe: ["CWE-295: Improper Certificate Validation"]
+      confidence: HIGH
+      references: ["https://nodejs.org/api/cli.html#node_tls_reject_unauthorizedvalue"]
+      license: MIT OR Apache-2.0
+    pattern-either:
+      - pattern: 'process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"'
+      - pattern: "process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0'"
+      - pattern: "{..., rejectUnauthorized: false, ...}"
+
+  - id: pmx-js-open-redirect
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      The redirect target comes straight from the request, so a link to this site can send users to
+      any site. Redirect to a fixed path, or check the target against an allow list.
+    metadata:
+      category: security
+      cwe: ["CWE-601: Open Redirect"]
+      confidence: MEDIUM
+      references: ["https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html"]
+      license: MIT OR Apache-2.0
+    pattern-either:
+      - pattern: $RES.redirect($REQ.query.$P)
+      - pattern: $RES.redirect($REQ.body.$P)
+      - pattern: $RES.redirect($REQ.params.$P)
+      - pattern: $RES.redirect($REQ.query[$P])
+      - pattern: $RES.redirect($STATUS, $REQ.query.$P)
+
+  - id: pmx-js-weak-hash
+    languages: [javascript, typescript]
+    severity: INFO
+    message: >-
+      MD5 and SHA-1 are broken for security purposes. Fine for cache keys or checksums of trusted
+      data; for passwords use bcrypt/scrypt/argon2, for signatures SHA-256 or better.
+    metadata:
+      category: security
+      cwe: ["CWE-328: Use of Weak Hash"]
+      confidence: LOW
+      license: MIT OR Apache-2.0
+    pattern-either:
+      - pattern: $CRYPTO.createHash("md5")
+      - pattern: $CRYPTO.createHash("sha1")
+
+  - id: pmx-js-jwt-none-algorithm
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Accepting the "none" algorithm means unsigned tokens pass verification. List only the
+      algorithms you sign with.
+    metadata:
+      category: security
+      cwe: ["CWE-347: Improper Verification of Cryptographic Signature"]
+      confidence: HIGH
+      license: MIT OR Apache-2.0
+    pattern-either:
+      - pattern: '{..., algorithms: [..., "none", ...], ...}'
+      - pattern: '{..., algorithm: "none", ...}'

@@ -1,0 +1,81 @@
+# pmx-sast@1 — Kotlin and Android. Original rules, MIT OR Apache-2.0 (see README.md).
+rules:
+  - id: pmx-kotlin-sql-injection
+    languages: [kotlin]
+    severity: ERROR
+    # Migrations interpolate developer-chosen constants into DDL; not an injection surface.
+    paths:
+      exclude:
+        - "**/migration/**"
+        - "**/migrations/**"
+        - "**/Migrations/**"
+        - "**/db/migrate/**"
+        - "**/alembic/versions/**"
+        - "**/*Migration*"
+        - "**/*migration*"
+    message: >-
+      SQL is built from a string template or concatenation. Use selection arguments
+      (rawQuery("... WHERE id = ?", arrayOf(id))) or Room's bound parameters.
+    metadata:
+      category: security
+      cwe: ["CWE-89: SQL Injection"]
+      confidence: MEDIUM
+      license: MIT OR Apache-2.0
+    patterns:
+      - pattern: $DB.$Q($ARG, ...)
+      - metavariable-regex:
+          metavariable: $Q
+          regex: ^(?:rawQuery|execSQL|query|executeQuery|execute|createQuery|createNativeQuery)$
+      # A literal joined with `+`, or a string template with `$name` / `${expr}`.
+      - metavariable-regex:
+          metavariable: $ARG
+          regex: (?s)^(?:".*"\s*\+.*|".*\$\{?[A-Za-z_].*")$
+      - metavariable-regex:
+          metavariable: $ARG
+          regex: (?is).*\b(?:select|insert|update|delete|create|drop|alter|where)\b
+
+  - id: pmx-kotlin-command-injection
+    languages: [kotlin]
+    severity: ERROR
+    message: >-
+      A command is run from a non-literal string. Use ProcessBuilder with separate arguments, and
+      never pass input to a shell.
+    metadata:
+      category: security
+      cwe: ["CWE-78: OS Command Injection"]
+      confidence: MEDIUM
+      license: MIT OR Apache-2.0
+    patterns:
+      - pattern: Runtime.getRuntime().exec($CMD, ...)
+      - pattern-not: Runtime.getRuntime().exec("...", ...)
+
+  - id: pmx-android-webview-js-bridge
+    languages: [kotlin, java]
+    severity: WARNING
+    message: >-
+      addJavascriptInterface exposes app methods to every page the WebView loads. Load only your
+      own content in it, or use postWebMessage with origin checks.
+    metadata:
+      category: security
+      cwe: ["CWE-749: Exposed Dangerous Method or Function"]
+      confidence: MEDIUM
+      references: ["https://developer.android.com/privacy-and-security/risks/insecure-webview-native-bridges"]
+      license: MIT OR Apache-2.0
+    pattern: $W.addJavascriptInterface(...)
+
+  - id: pmx-android-world-readable
+    languages: [kotlin, java]
+    severity: WARNING
+    message: >-
+      MODE_WORLD_READABLE / MODE_WORLD_WRITEABLE let other apps read or change this data. Use
+      MODE_PRIVATE and a ContentProvider or FileProvider to share.
+    metadata:
+      category: security
+      cwe: ["CWE-276: Incorrect Default Permissions"]
+      confidence: HIGH
+      license: MIT OR Apache-2.0
+    pattern-either:
+      - pattern: Context.MODE_WORLD_READABLE
+      - pattern: Context.MODE_WORLD_WRITEABLE
+      - pattern: MODE_WORLD_READABLE
+      - pattern: MODE_WORLD_WRITEABLE

@@ -383,12 +383,7 @@ pub fn run_stage(
 ) -> Result<SnapshotInput> {
     let ws = st.ws;
     let config = &ws.config;
-    let rules: Vec<PathBuf> = config
-        .snapshots
-        .sast_rules
-        .iter()
-        .map(|r| pm_config::expand_path(r, &ws.root))
-        .collect();
+    let rules = rule_paths(ws)?;
     let keys = Keys::new(st.tools, &rules);
     let from = config
         .snapshots
@@ -529,21 +524,103 @@ pub fn run_stage(
     Ok(input)
 }
 
-/// Rule files that exist, for `pmx check`/`doctor`.
-pub fn sast_rules(ws: &Workspace) -> Vec<PathBuf> {
-    run::rule_files(
-        &ws.config
-            .snapshots
-            .sast_rules
-            .iter()
-            .map(|r| pm_config::expand_path(r, &ws.root))
-            .collect::<Vec<_>>(),
-    )
+/// The configured SAST rule paths, the bundled set written to `.pmx/sast-rules/` when used
+/// (spec §7.4: unset = bundled; `"bundled"` adds it; `[]` = off).
+pub fn rule_paths(ws: &Workspace) -> std::io::Result<Vec<PathBuf>> {
+    let configured = ws
+        .config
+        .snapshots
+        .sast_rules
+        .clone()
+        .unwrap_or_else(|| vec!["bundled".into()]);
+    configured
+        .iter()
+        .map(|r| {
+            if r == "bundled" {
+                pm_snapshot::bundled::materialize(&ws.state_dir().join("sast-rules"))
+            } else {
+                Ok(pm_config::expand_path(r, &ws.root))
+            }
+        })
+        .collect()
+}
+
+/// What the SAST rules are, for `meta.tool_versions` and `pmx doctor`: the bundled set and/or a
+/// hash of custom rule files.
+pub fn describe_rules(ws: &Workspace) -> Option<String> {
+    let configured = ws
+        .config
+        .snapshots
+        .sast_rules
+        .clone()
+        .unwrap_or_else(|| vec!["bundled".into()]);
+    let bundled = configured.iter().any(|r| r == "bundled");
+    let custom: Vec<PathBuf> = configured
+        .iter()
+        .filter(|r| *r != "bundled")
+        .map(|r| pm_config::expand_path(r, &ws.root))
+        .collect();
+    let files = run::rule_files(&custom);
+    let mut parts = Vec::new();
+    if bundled {
+        parts.push(format!(
+            "{} ({} rules)",
+            pm_snapshot::bundled::RULESET,
+            pm_snapshot::bundled::rule_count()
+        ));
+    }
+    if !files.is_empty() {
+        let mut h = Sha256::new();
+        for f in &files {
+            h.update(std::fs::read(f).unwrap_or_default());
+        }
+        let digest: String = h.finalize().iter().take(6).map(|b| format!("{b:02x}")).collect();
+        parts.push(format!("custom {} files ({digest})", files.len()));
+    }
+    (!parts.is_empty()).then(|| parts.join(" + "))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ws(rules: Option<Vec<String>>) -> (tempfile::TempDir, Workspace) {
+        let tmp = tempfile::tempdir().unwrap();
+        let text = r#"
+            [project]
+            name = "X"
+            range_start = "2025-01-01"
+            breadth_roles = ["backend"]
+            [[repo]]
+            path = "a"
+            role = "backend"
+        "#;
+        let mut config = pm_config::Config::parse(text, std::path::Path::new("x")).unwrap();
+        config.snapshots.sast_rules = rules;
+        let ws = Workspace {
+            root: tmp.path().to_path_buf(),
+            config,
+        };
+        (tmp, ws)
+    }
+
+    #[test]
+    fn sast_rules_default_to_the_bundled_set() {
+        let (_t, w) = ws(None);
+        let paths = rule_paths(&w).unwrap();
+        assert_eq!(paths.len(), 1);
+        assert_eq!(run::rule_files(&paths).len(), pm_snapshot::bundled::RULES.len());
+        assert!(describe_rules(&w).unwrap().starts_with("pmx-sast@1 ("));
+
+        let (_t, off) = ws(Some(vec![]));
+        assert!(rule_paths(&off).unwrap().is_empty());
+        assert_eq!(describe_rules(&off), None);
+
+        let (t, both) = ws(Some(vec!["bundled".into(), "mine.yaml".into()]));
+        std::fs::write(t.path().join("mine.yaml"), "rules: []\n").unwrap();
+        assert_eq!(rule_paths(&both).unwrap().len(), 2);
+        assert!(describe_rules(&both).unwrap().contains(" + custom 1 files ("));
+    }
 
     #[test]
     fn dates() {

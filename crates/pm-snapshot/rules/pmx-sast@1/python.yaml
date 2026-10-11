@@ -1,0 +1,144 @@
+# pmx-sast@1 — Python. Original rules, MIT OR Apache-2.0 (see README.md).
+rules:
+  - id: pmx-py-eval
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Code built from a non-literal is evaluated. If any part comes from input, an attacker can run
+      code. Use ast.literal_eval for data, or dispatch through a fixed table.
+    metadata:
+      category: security
+      cwe: ["CWE-95: Eval Injection"]
+      confidence: HIGH
+      license: MIT OR Apache-2.0
+    patterns:
+      - pattern-either:
+          - pattern: eval($X, ...)
+          - pattern: exec($X, ...)
+      - pattern-not: eval("...", ...)
+      - pattern-not: exec("...", ...)
+
+  - id: pmx-py-command-injection
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A shell runs a command built from a non-literal. Pass an argument list without shell=True
+      (subprocess.run(["git", "log", name])) so input can't add commands.
+    metadata:
+      category: security
+      cwe: ["CWE-78: OS Command Injection"]
+      confidence: HIGH
+      references: ["https://docs.python.org/3/library/subprocess.html#security-considerations"]
+      license: MIT OR Apache-2.0
+    pattern-either:
+      - patterns:
+          - pattern: subprocess.$F($CMD, ..., shell=True, ...)
+          - pattern-not: subprocess.$F("...", ..., shell=True, ...)
+      - patterns:
+          - pattern-either:
+              - pattern: os.system($CMD)
+              - pattern: os.popen($CMD, ...)
+          - pattern-not: os.system("...")
+          - pattern-not: os.popen("...", ...)
+
+  - id: pmx-py-sql-injection
+    languages: [python]
+    severity: ERROR
+    # Migrations interpolate developer-chosen constants into DDL; not an injection surface.
+    paths:
+      exclude:
+        - "**/migration/**"
+        - "**/migrations/**"
+        - "**/Migrations/**"
+        - "**/db/migrate/**"
+        - "**/alembic/versions/**"
+        - "**/*Migration*"
+        - "**/*migration*"
+    message: >-
+      SQL is built with string formatting. Pass values as parameters
+      (cursor.execute("... WHERE id = %s", (id,))) so they can't change the query.
+    metadata:
+      category: security
+      cwe: ["CWE-89: SQL Injection"]
+      confidence: MEDIUM
+      references: ["https://cheatsheetseries.owasp.org/cheatsheets/Query_Parameterization_Cheat_Sheet.html"]
+      license: MIT OR Apache-2.0
+    patterns:
+      - metavariable-regex:
+          metavariable: $EXECUTE
+          regex: ^(?:execute|executemany|executescript|raw|text)$
+      - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern: $C.$EXECUTE("$SQL" % $X, ...)
+                  - pattern: $C.$EXECUTE("$SQL".format(...), ...)
+              - metavariable-regex:
+                  metavariable: $SQL
+                  regex: (?is).*\b(?:select|insert|update|delete|create|drop|alter|where)\b
+          # Concatenation: matched on the source text (a literal joined with `+`).
+          - patterns:
+              - pattern: $C.$EXECUTE($Q, ...)
+              - metavariable-regex:
+                  metavariable: $Q
+                  regex: (?s)^["'].*["']\s*\+.*$
+              - metavariable-regex:
+                  metavariable: $Q
+                  regex: (?is).*\b(?:select|insert|update|delete|create|drop|alter|where)\b
+          # f-strings: matched on their source text (SQL keyword and an interpolation).
+          - patterns:
+              - pattern: $C.$EXECUTE($Q, ...)
+              - metavariable-regex:
+                  metavariable: $Q
+                  regex: (?is)^f["'].*\b(?:select|insert|update|delete|create|drop|alter|where)\b.*\{
+
+  - id: pmx-py-unsafe-deserialization
+    languages: [python]
+    severity: WARNING
+    message: >-
+      This deserializer can run code from the data it reads. Use JSON, or yaml.safe_load, for data
+      that isn't fully trusted.
+    metadata:
+      category: security
+      cwe: ["CWE-502: Deserialization of Untrusted Data"]
+      confidence: MEDIUM
+      license: MIT OR Apache-2.0
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+      - pattern: marshal.loads(...)
+      - patterns:
+          - pattern: yaml.load(...)
+          - pattern-not: yaml.load(..., Loader=yaml.SafeLoader, ...)
+          - pattern-not: yaml.load(..., Loader=yaml.CSafeLoader, ...)
+          - pattern-not: yaml.load(..., Loader=SafeLoader, ...)
+
+  - id: pmx-py-tls-verification-disabled
+    languages: [python]
+    severity: ERROR
+    message: >-
+      verify=False turns off certificate checks, so any server can impersonate the real one. Point
+      verify at the right CA bundle instead.
+    metadata:
+      category: security
+      cwe: ["CWE-295: Improper Certificate Validation"]
+      confidence: HIGH
+      license: MIT OR Apache-2.0
+    pattern-either:
+      - pattern: requests.$M(..., verify=False, ...)
+      - pattern: httpx.$M(..., verify=False, ...)
+      - pattern: ssl._create_unverified_context(...)
+
+  - id: pmx-py-debug-enabled
+    languages: [python]
+    severity: WARNING
+    message: >-
+      The debug server/mode exposes an interactive console and stack traces. Never enable it in
+      deployed code; read it from configuration.
+    metadata:
+      category: security
+      cwe: ["CWE-489: Active Debug Code"]
+      confidence: MEDIUM
+      license: MIT OR Apache-2.0
+    pattern-either:
+      - pattern: $APP.run(..., debug=True, ...)
+      - pattern: DEBUG = True

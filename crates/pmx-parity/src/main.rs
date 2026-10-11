@@ -424,7 +424,7 @@ fn live_snapshot_lines(g: &Golden, key: &str, mode: Mode, tools_dir: &std::path:
     let first = quality["months"][0].as_str().unwrap_or("2025-09").to_string();
     config.snapshots = pm_config::Snapshots {
         cadence: Some(pm_config::SnapshotCadence::Monthly),
-        sast_rules: vec![tools_dir.join("semgrep_rules").display().to_string()],
+        sast_rules: Some(vec![tools_dir.join("semgrep_rules").display().to_string()]),
         jobs: Some(1),
         since: Some(format!("{first}-01")),
         enabled: Some(true),

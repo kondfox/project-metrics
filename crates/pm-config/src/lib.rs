@@ -250,9 +250,10 @@ pub struct Snapshots {
     /// `weekly` (week-ends and month-ends, the default) or `monthly` (month-ends only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cadence: Option<SnapshotCadence>,
-    /// Semgrep rule files or folders for own-code SAST. None configured → SAST not measured.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sast_rules: Vec<String>,
+    /// Semgrep rule files or folders for own-code SAST. Unset: the bundled `pmx-sast` rules.
+    /// `"bundled"` adds them to your own; `[]` turns SAST off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sast_rules: Option<Vec<String>>,
     /// Trees scanned at the same time (default 2: semgrep is CPU-heavy and drops rules when the
     /// machine is overloaded, spec §7.4).
     #[serde(default, skip_serializing_if = "Option::is_none")]

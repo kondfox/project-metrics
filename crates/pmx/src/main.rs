@@ -674,11 +674,9 @@ fn cmd_doctor(ws_dir: &Path) -> Result<()> {
         }
     }
     if let Ok(ws) = Workspace::load(ws_dir) {
-        let rules = pmx::snapshots::sast_rules(&ws);
-        if rules.is_empty() {
-            println!("⚠ no SAST rules configured ([snapshots] sast_rules): SAST not measured");
-        } else {
-            println!("✓ {} SAST rule files", rules.len());
+        match pmx::snapshots::describe_rules(&ws) {
+            Some(rules) => println!("✓ SAST rules: {rules}"),
+            None => println!("⚠ SAST is off ([snapshots] sast_rules = [])"),
         }
     }
     println!("tools folder: {}", pmx::tools_dir().join("bin").display());

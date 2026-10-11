@@ -41,7 +41,8 @@ in the browser. A second command combines several projects into the **fleet view
 | D17 | **One self-contained page:** data, ECharts and the WASM engine are inlined into one HTML file, so it works from `pmx serve`, as a shared file, and opened from disk. `pmx serve` binds to 127.0.0.1 only and includes the private lead view; `pmx export --format html` leaves it out unless `--with-private` (written under `out/private/`) | 2026-10-09 |
 | D21 | **Snapshot stage** (`pm-snapshot` crate): trees via `git archive`; raw tool results cached per (repo, commit, tool version + options), so installing a tool or changing rules only runs that tool; classification (test paths, triage) applied after the cache. osv-scanner results are keyed by lockfile content and **day**. Scans run on a bounded pool (`[snapshots] jobs`, default 2) | 2026-10-09 |
 | D22 | **`pmx tools install`** downloads the pinned scc, osv-scanner and gitleaks from their GitHub releases into the user cache (`PMX_TOOLS_DIR` overrides) and refuses any download whose SHA-256 differs from the digest compiled into pmx. semgrep and jscpd stay user-installed (`pmx doctor` says how) | 2026-10-09 |
-| D23 | **No bundled SAST rules yet.** Rules are configured per project (`[snapshots] sast_rules`). The Opengrep rules fork is LGPL-2.1 + Commons Clause, so it can't be the bundled default either (§9) | 2026-10-09 |
+| D23 | ~~No bundled SAST rules yet~~ **Superseded by D24** | 2026-10-09 |
+| D24 | **Our own SAST rules, `pmx-sast@1`** (owner decision): 34 rules written from scratch under MIT OR Apache-2.0, bundled in the binary and used unless a project configures others. Precision over coverage (SAST is a trend); semgrep tests and a duplicate check in CI; versioned (any change is `@2`). Checked against the three pilot projects: 7 findings, all plausible, after excluding migrations from the SQL rules | 2026-10-11 |
 | D10 | The parity harness is a workspace crate (`pmx-parity`, not published) that reads the golden set from `PMX_GOLDEN_DIR` and prints to the terminal only. It runs twice: in the **prototype dialect** (the prototype's test rules and git reading) every M1 series must match exactly; in the spec dialect the intentional differences are reported | 2026-10-09 |
 
 ---
@@ -467,9 +468,4 @@ derived from schema answers. The rubric version bump (`six-axis@2`) invalidates 
 - **Local model choice** for sensitive repos. Pick it with `classifier eval` once M5 lands.
 - The **tool name**.
 - **Cross-file SAST** stays an open decision, separate from this plan.
-- **Bundled SAST rules licence.** Semgrep registry rules are under the Semgrep Rules License, which restricts
-  redistribution, so they can't ship in this repo. The Opengrep rules fork, planned as the alternative,
-  turned out (checked 2026-10-09) to be LGPL-2.1 **plus the Commons Clause** (no selling), so it isn't open
-  source either. Options: write a small ruleset under MIT/Apache, let `pmx tools install` fetch a pinned
-  third-party snapshot onto the user's machine (the user accepts its licence; we don't redistribute), or
-  keep rules user-configured only (current state, D23). **Owner decision needed.**
+- ~~Bundled SAST rules licence~~ — resolved 2026-10-11 (D24): our own `pmx-sast@1` rules.

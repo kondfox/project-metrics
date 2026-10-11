@@ -8,6 +8,8 @@ Plan and milestones: [wiki/tool-implementation-plan.md](wiki/tool-implementation
   CLI; CI requires it with `PMX_REQUIRE_NODE=1`).
 - **Snapshot tools** (scc, jscpd, osv-scanner, gitleaks, semgrep) are optional locally; tests use fake
   tools (`crates/pmx/tests/snapshots.rs`). `pmx doctor` shows what you have.
+- **SAST rules** (`crates/pm-snapshot/rules/pmx-sast@1/`): original rules only, never copied from the
+  Semgrep registry or Opengrep. Read its README before changing a rule (any change is a new version).
 - **Dashboard:** React + TypeScript in `crates/pmx/web/`; read its [README](crates/pmx/web/README.md)
   for the layout and how to add metrics and sections. `npm run check` there must pass. Metric math
   belongs in pm-metrics, never in TypeScript, and the types in `src/generated/` come from Rust

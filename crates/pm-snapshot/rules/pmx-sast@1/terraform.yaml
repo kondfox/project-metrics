@@ -1,0 +1,49 @@
+# pmx-sast@1 — Terraform. Original rules, MIT OR Apache-2.0 (see README.md).
+rules:
+  - id: pmx-tf-public-bucket-acl
+    languages: [hcl]
+    severity: ERROR
+    message: >-
+      This bucket ACL makes objects public. Keep buckets private and serve public content through a
+      CDN with an origin access identity.
+    metadata:
+      category: security
+      cwe: ["CWE-732: Incorrect Permission Assignment"]
+      confidence: HIGH
+      license: MIT OR Apache-2.0
+    pattern-either:
+      - pattern: acl = "public-read"
+      - pattern: acl = "public-read-write"
+      - pattern: predefined_acl = "publicRead"
+      - pattern: predefined_acl = "publicReadWrite"
+
+  - id: pmx-tf-admin-port-open-to-world
+    languages: [hcl]
+    severity: ERROR
+    message: >-
+      SSH/RDP is open to the whole internet. Restrict the source range to known addresses or use a
+      bastion / session manager.
+    metadata:
+      category: security
+      cwe: ["CWE-284: Improper Access Control"]
+      confidence: MEDIUM
+      license: MIT OR Apache-2.0
+    patterns:
+      - pattern-inside: |
+          ingress {
+            ...
+          }
+      - pattern: cidr_blocks = [..., "0.0.0.0/0", ...]
+      - pattern-either:
+          - pattern-inside: |
+              ingress {
+                ...
+                from_port = 22
+                ...
+              }
+          - pattern-inside: |
+              ingress {
+                ...
+                from_port = 3389
+                ...
+              }

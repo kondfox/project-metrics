@@ -414,6 +414,66 @@ pub fn generate(dir: &Path, as_of: NaiveDate) -> Result<Workspace> {
                 );
             }
         }
+        // A few security mistakes for the SAST trend: one is fixed months later, one stays.
+        let in_week = |m: i32| week <= month_add(history_start, m) && month_add(history_start, m) < week + Days::new(7);
+        if in_week(5) {
+            let r = &mut repos[0];
+            let path = "internal/report.go".to_string();
+            r.files.insert(
+                path.clone(),
+                [
+                    "package internal",
+                    "",
+                    "func OrdersByCustomer(db *sql.DB, customer string) (*sql.Rows, error) {",
+                    "\treturn db.Query(fmt.Sprintf(\"SELECT * FROM orders WHERE customer = '%s'\", customer))",
+                    "}",
+                ]
+                .map(String::from)
+                .to_vec(),
+            );
+            r.commit(
+                PEOPLE[2].emails.first().map(|e| (PEOPLE[2].name, *e)).unwrap(),
+                timestamp(week + Days::new(1), 15),
+                "ACME-900 Orders report",
+                &[path],
+                &[],
+            );
+        }
+        if in_week(9) {
+            let r = &mut repos[0];
+            let path = "internal/report.go".to_string();
+            if let Some(lines) = r.files.get_mut(&path) {
+                lines[3] = "\treturn db.Query(\"SELECT * FROM orders WHERE customer = $1\", customer)".into();
+            }
+            r.commit(
+                PEOPLE[1].emails.first().map(|e| (PEOPLE[1].name, *e)).unwrap(),
+                timestamp(week + Days::new(2), 11),
+                "ACME-950 Parameterize the orders report",
+                &[path],
+                &[],
+            );
+        }
+        if in_week(7) {
+            let r = &mut repos[1];
+            let path = "src/legacy/Preview.tsx".to_string();
+            r.files.insert(
+                path.clone(),
+                [
+                    "export function Preview({ html }: { html: string }) {",
+                    "  return <div className=\"preview\" dangerouslySetInnerHTML={{ __html: html }} />;",
+                    "}",
+                ]
+                .map(String::from)
+                .to_vec(),
+            );
+            r.commit(
+                EXTERNAL,
+                timestamp(week + Days::new(3), 16),
+                "Preview widget",
+                &[path],
+                &[],
+            );
+        }
         let ext_from = month_add(history_start, 4);
         if week >= ext_from && week < month_add(ext_from, 3) {
             let r = &mut repos[1];
@@ -488,7 +548,11 @@ pub fn generate(dir: &Path, as_of: NaiveDate) -> Result<Workspace> {
         people,
         fte: None,
         secrets_triage: Vec::new(),
-        snapshots: Default::default(),
+        // Month-ends only, so the demo stays quick (about a minute of scanning).
+        snapshots: pm_config::Snapshots {
+            cadence: Some(pm_config::SnapshotCadence::Monthly),
+            ..Default::default()
+        },
         classifiers: BTreeMap::new(),
         velocity: None,
     };

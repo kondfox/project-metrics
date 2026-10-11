@@ -626,6 +626,9 @@ pub fn collect(ws: &Workspace, opts: &CollectOptions) -> Result<Collected> {
     let mut tool_versions = BTreeMap::new();
     tool_versions.insert("pmx".to_string(), env!("CARGO_PKG_VERSION").to_string());
     tool_versions.insert("git".to_string(), Git::version()?);
+    if let Some(rules) = snapshots.as_ref().and_then(|_| crate::snapshots::describe_rules(ws)) {
+        tool_versions.insert("sast_rules".into(), rules);
+    }
     if let Some((_, tools)) = &snapshots {
         for id in pm_snapshot::ToolId::ALL {
             if let Some(t) = tools.get(id) {
