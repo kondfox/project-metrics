@@ -456,10 +456,13 @@ schema for every provider. Design: [tool-implementation-plan.md §6](tool-implem
   instructions, criteria}}}`; response `{answers{id: {type, score|choice|noul, probabilities, confidence}}}`
   plus `confidence_source` (`model · logprobs · sampled · none`). Providers: `jev`, `openai-compatible`,
   `anthropic`, `command`. `data_policy = "local-only"` refuses any non-local provider or fallback.
-- **Rubric:** a versioned question set, `six-axis@2`, derived from [`rubrics/six-axis@1.md`](../rubrics/six-axis@1.md)
-  (anchors unchanged). Counting and arithmetic stay in code: R1 = count of per-layer Nouls; R5 = file/module
-  counts plus one Noul; R2/R3/R4/R6 = Score questions with the "take the lower anchor" rule applied in code.
-  Never edit anchors after scoring; any change bumps the version.
+- **Rubric:** a versioned question set derived from [`rubrics/six-axis@1.md`](../rubrics/six-axis@1.md)
+  (anchors unchanged). **`six-axis@3`** (decided 2026-10-11, plan D36; exact questions in
+  [velocity-metrics.md](velocity-metrics.md)): every anchor of R2–R6 is a yes/no with a probability from
+  every provider, the level is the highest anchor with P(yes) ≥ 0.65, R1 counts the distinct layers of a
+  per-file layer choice. Until it ships, runs use `six-axis@2` (R1 = per-layer Nouls; R5 = file/module
+  counts plus one Noul; R2/R3/R4/R6 = Score questions with "take the lower anchor" in code). Never edit
+  anchors after scoring; any change bumps the version.
 - **State per package:** `id`, `subjects[]`, `repos[]`, changed files with class and role, `n_commits`,
   `added/deleted`, `truncated`, and the filtered diff (≤ 24 KB).
 - **Output per package (unchanged contract):** `{ "id": <verbatim>, "R1".."R6": 0–3, "description" }`,
