@@ -167,6 +167,8 @@ pub struct OpenAiCompatible {
     pub api_key: Option<String>,
     /// 0 for one answer per package; the server default when sampling.
     pub temperature: Option<f64>,
+    /// Sent as `reasoning_effort` (`none` turns a thinking model's reasoning off: Ollama, OpenAI).
+    pub effort: Option<String>,
     pub retry: Retry,
     /// Cleared after the server rejects `logprobs`.
     pub logprobs: AtomicBool,
@@ -185,6 +187,9 @@ impl OpenAiCompatible {
         });
         if let Some(t) = self.temperature {
             body["temperature"] = json!(t);
+        }
+        if let Some(e) = &self.effort {
+            body["reasoning_effort"] = json!(e);
         }
         if logprobs {
             body["logprobs"] = json!(true);
@@ -207,11 +212,18 @@ impl OpenAiCompatible {
 
 impl Provider for OpenAiCompatible {
     fn identity(&self) -> String {
-        format!(
-            "openai-compatible:{}:{}:{TEMPLATE_VERSION}",
-            base(&self.base_url),
-            self.model
-        )
+        match &self.effort {
+            None => format!(
+                "openai-compatible:{}:{}:{TEMPLATE_VERSION}",
+                base(&self.base_url),
+                self.model
+            ),
+            Some(e) => format!(
+                "openai-compatible:{}:{}@{e}:{TEMPLATE_VERSION}",
+                base(&self.base_url),
+                self.model
+            ),
+        }
     }
 
     fn local(&self) -> bool {
@@ -271,6 +283,8 @@ pub fn read_openai(req: &Request, v: &Value, model: &str) -> Result<Response> {
 }
 
 /// The probabilities of each level at the token holding `"<id>": <level>`, from its top logprobs.
+/// The last occurrence counts: a thinking model's logprobs start with its reasoning, which can
+/// quote the keys too.
 fn level_probabilities(tokens: &[Value], id: &str, levels: usize) -> Option<BTreeMap<String, f64>> {
     let mut text = String::new();
     let mut starts = Vec::with_capacity(tokens.len());
@@ -279,7 +293,7 @@ fn level_probabilities(tokens: &[Value], id: &str, levels: usize) -> Option<BTre
         text.push_str(t["token"].as_str()?);
     }
     let key = format!("\"{id}\"");
-    let after = text.find(&key)? + key.len();
+    let after = text.rfind(&key)? + key.len();
     let rest = &text[after..];
     let colon = rest.find(':')?;
     let digit = after + colon + 1 + rest[colon + 1..].find(|c: char| !c.is_whitespace())?;
@@ -445,6 +459,17 @@ mod tests {
             }
             a => panic!("{a:?}"),
         }
+        // Reasoning that quotes the key first (a thinking model's logprobs include it) is skipped.
+        let mut thinking: Vec<Value> = "I think \"r2_data_model\": 3 maybe. "
+            .chars()
+            .map(|c| json!({"token": c.to_string(), "logprob": 0.0, "top_logprobs": [{"token": "3", "logprob": 0.0}]}))
+            .collect();
+        thinking.extend(tokens.iter().cloned());
+        let v2 = json!({"choices": [{"message": {"content": content}, "logprobs": {"content": thinking}}]});
+        match &read_openai(&req, &v2, "m").unwrap().answers["r2_data_model"] {
+            Answer::Score { probabilities, .. } => assert!((probabilities["1"] - 2.0 / 3.0).abs() < 1e-9),
+            a => panic!("{a:?}"),
+        }
         // Without logprobs: the plain answer.
         let v = json!({"choices": [{"message": {"content": content}}]});
         assert_eq!(
@@ -467,6 +492,7 @@ mod tests {
             model: "qwen3-coder:30b".into(),
             api_key: None,
             temperature: Some(0.0),
+            effort: Some("none".into()),
             retry: retry(),
             logprobs: AtomicBool::new(true),
         };
@@ -478,5 +504,7 @@ mod tests {
         assert!(reqs[1].2.get("logprobs").is_none());
         assert_eq!(reqs[1].2["temperature"], 0.0);
         assert_eq!(reqs[1].2["response_format"]["json_schema"]["strict"], true);
+        assert_eq!(reqs[1].2["reasoning_effort"], "none");
+        assert!(p.identity().contains("qwen3-coder:30b@none:"));
     }
 }

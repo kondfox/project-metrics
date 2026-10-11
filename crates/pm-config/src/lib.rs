@@ -308,7 +308,9 @@ pub struct ClassifierConfig {
     /// Packages classified at the same time (default 4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jobs: Option<usize>,
-    /// `anthropic` and `claude-code`: the effort level (`low` … `max`; default: the model's).
+    /// The effort level (`low` … `max`; default: the model's): `output_config.effort` for
+    /// `anthropic`, `--effort` for `claude-code`, `reasoning_effort` for `openai-compatible` (where
+    /// `none` turns a thinking model's reasoning off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
     /// Seconds before one call is abandoned (default 300).

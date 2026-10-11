@@ -120,6 +120,7 @@ pub fn build_with(c: &ClassifierConfig, http: Arc<dyn Http>) -> Result<Box<dyn P
             },
             // One deterministic answer, unless sampling.
             temperature: (samples == 1).then_some(0.0),
+            effort: c.effort.clone(),
             retry,
             logprobs: AtomicBool::new(true),
         }),
