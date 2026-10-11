@@ -109,6 +109,7 @@ provider = "command"
 command = ["sh", "{sure}"]
 
 [velocity]
+rubric = "six-axis@2"
 classifier = "jevlike"
 "#
         ),
@@ -182,7 +183,9 @@ fn eval_compares_with_the_reference() {
     let cand = script(&bin, "cand", &plain(1), &[("SHOP-2", plain(2)), ("SHOP-3", plain(0))]);
     std::fs::write(
         root.join("pmx.toml"),
-        format!("{PROJECT}\n[classifiers.cand]\nprovider = \"command\"\ncommand = [\"sh\", \"{cand}\"]\n"),
+        format!(
+            "{PROJECT}\n[classifiers.cand]\nprovider = \"command\"\ncommand = [\"sh\", \"{cand}\"]\n\n[velocity]\nrubric = \"six-axis@2\"\n"
+        ),
     )
     .unwrap();
     let ws = Workspace::load(root).unwrap();
@@ -251,7 +254,8 @@ fn eval_matches_author_weeks_by_git_name() {
         root.join("pmx.toml"),
         format!(
             "{PROJECT}\n[people]\n\"Robert B.\" = [\"{}\"]\n\"Jane\" = [\"{}\", \"{}\"]\n\n\
-             [classifiers.cand]\nprovider = \"command\"\ncommand = [\"sh\", \"{cand}\"]\n",
+             [classifiers.cand]\nprovider = \"command\"\ncommand = [\"sh\", \"{cand}\"]\n\n\
+             [velocity]\nrubric = \"six-axis@2\"\n",
             BOB.1, JANE.1, JANE_HOME.1
         ),
     )
@@ -284,4 +288,70 @@ fn eval_matches_author_weeks_by_git_name() {
     let mut want = vec![format!("{}~2025-W11", JANE.0), format!("{}~2025-W11", JANE_HOME.0)];
     want.sort();
     assert_eq!(missing, want);
+}
+
+/// A `six-axis@3` answer: R2 = `r2` (its anchors up to `r2` at P 0.9), every file `ui`.
+fn v3_answers(r2: usize) -> Value {
+    let mut a = json!({});
+    for id in pm_llm::rubric::ANCHORS.iter().flatten() {
+        a[id] = json!({"type": "noul", "noul": 0.1});
+    }
+    for id in pm_llm::rubric::ANCHORS[0].iter().take(r2) {
+        a[id] = json!({"type": "noul", "noul": 0.9});
+    }
+    for n in 1..=40 {
+        a[pm_llm::rubric::file_question(n)] =
+            json!({"type": "choice", "choice": "ui", "probabilities": {"ui": 0.9}, "confidence": 0.9});
+    }
+    json!({"model": "fake", "answers": a, "confidence_source": "stated"})
+}
+
+#[test]
+fn score_writes_a_reference_set_under_v3() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    repo(root);
+    let refc = script(&bin, "ref", &v3_answers(1), &[("SHOP-2", v3_answers(3))]);
+    std::fs::write(
+        root.join("pmx.toml"),
+        format!("{PROJECT}\n[classifiers.ref]\nprovider = \"command\"\ncommand = [\"sh\", \"{refc}\"]\n"),
+    )
+    .unwrap();
+    let ws = Workspace::load(root).unwrap();
+    let ids = root.join("ids.csv");
+    std::fs::write(
+        &ids,
+        "project,id,kind\nFixture,SHOP-1,ticket\nFixture,SHOP-2,ticket\nOther,SHOP-3,ticket\nFixture,NOPE-1,ticket\n",
+    )
+    .unwrap();
+    let list = pmx::eval::read_ids(&ids, "Fixture").unwrap();
+    assert_eq!(list, ["SHOP-1", "SHOP-2", "NOPE-1"]);
+    let r = pmx::eval::score(&ws, &list, "ref", d("2025-03-31"), true).unwrap();
+    assert_eq!((r.scored, r.missing.as_slice()), (2, ["NOPE-1".to_string()].as_slice()));
+    assert_eq!(
+        r.csv,
+        "project,id,R1,R2,R3,R4,R5,R6\nFixture,SHOP-1,0,1,0,0,0,0\nFixture,SHOP-2,0,3,0,0,0,0\n"
+    );
+    assert_eq!(calls(&bin, "ref"), 2);
+
+    // The written set is a reference for `eval`; its first pass reads the same cached answers.
+    let reference = root.join("reference.csv");
+    std::fs::write(&reference, &r.csv).unwrap();
+    let refs = pmx::eval::read_reference(&reference).unwrap();
+    let opts = pmx::eval::EvalOptions {
+        classifier: "ref".into(),
+        as_of: d("2025-03-31"),
+        runs: 2,
+        use_cache: true,
+    };
+    let e = pmx::eval::eval(&ws, &refs, &opts).unwrap();
+    assert_eq!(e.scored.len(), 2);
+    assert_eq!(calls(&bin, "ref"), 4, "only the retest calls");
+    assert_eq!(e.retest_pct(), Some(100.0));
+    assert_eq!(e.drift_pct(), Some(0.0));
+    // Plain ids, one per line, work too.
+    std::fs::write(&ids, "SHOP-1\n").unwrap();
+    assert_eq!(pmx::eval::read_ids(&ids, "Fixture").unwrap(), ["SHOP-1"]);
 }

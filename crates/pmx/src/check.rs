@@ -48,8 +48,13 @@ pub fn local_only_violation(config: &Config, start: &str) -> Option<String> {
 
 /// Can each classifier run? (Providers not built yet, a missing `claude`, an unpinned model.)
 fn classifier_findings(c: &Config, out: &mut Vec<Finding>) {
+    if let Some(id) = c.velocity.as_ref().and_then(|v| v.rubric.as_deref()) {
+        if let Err(e) = pm_llm::QuestionSet::bundled(id) {
+            out.push(f(Level::Error, format!("[velocity] rubric: {e}")));
+        }
+    }
     for (name, cl) in &c.classifiers {
-        if let Err(e) = pm_llm::build(cl) {
+        if let Err(e) = pm_llm::build(cl, pm_llm::Template::default()) {
             out.push(f(Level::Error, format!("classifier `{name}`: {e}")));
             continue;
         }

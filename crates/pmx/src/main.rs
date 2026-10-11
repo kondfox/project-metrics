@@ -250,6 +250,23 @@ enum ClassifierCommand {
         #[arg(long)]
         no_cache: bool,
     },
+    /// Score the listed packages of this project with NAME, one per call, and write them as a
+    /// reference set (`project,id,R1..R6`) for `classifier eval`. Answers go through the cache.
+    Score {
+        name: String,
+        /// Package ids: a CSV with an `id` (and optionally `project`) column, or one id per line.
+        #[arg(long)]
+        ids: PathBuf,
+        /// Where to write the CSV (stdout when omitted).
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Measure as if today were this date.
+        #[arg(long)]
+        as_of: Option<NaiveDate>,
+        /// Don't read or store answers in .pmx/cache.sqlite.
+        #[arg(long)]
+        no_cache: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -839,6 +856,42 @@ fn run(cli: Cli) -> Result<()> {
             print!("{}", pmx::eval::render(&report));
             if report.verdict().is_err() {
                 return Err(anyhow::anyhow!("the classifier did not pass"));
+            }
+        }
+        Command::Classifier(ClassifierCommand::Score {
+            name,
+            ids,
+            out,
+            as_of,
+            no_cache,
+        }) => {
+            let ws = Workspace::load(&ws_dir)?;
+            let ids = pmx::eval::read_ids(&ids, &ws.config.project.name)?;
+            eprintln!(
+                "scoring {} package(s) of `{}` with `{name}`…",
+                ids.len(),
+                ws.config.project.name
+            );
+            let r = pmx::eval::score(&ws, &ids, &name, as_of.unwrap_or_else(today), !no_cache)?;
+            match &out {
+                Some(p) => std::fs::write(p, &r.csv).with_context(|| format!("writing {}", p.display()))?,
+                None => print!("{}", r.csv),
+            }
+            eprintln!(
+                "{} scored, {} not found in the repos, {} refused by the data policy, {} failed",
+                r.scored,
+                r.missing.len(),
+                r.refused,
+                r.failed.len()
+            );
+            if let Some((id, e)) = r.failed.first() {
+                eprintln!("first failure ({id}): {e}");
+            }
+            if !r.failed.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "{} package(s) failed: run again to retry them",
+                    r.failed.len()
+                ));
             }
         }
         Command::Classifier(ClassifierCommand::Test { name }) => {

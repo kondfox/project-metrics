@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::api::{ANTHROPIC_URL, Anthropic, JEV_URL, Jev, OpenAiCompatible};
 use crate::http::{Http, Retry, UreqHttp};
-use crate::prompt::{self, TEMPLATE_VERSION};
+use crate::prompt::{self, Template};
 use crate::schema::{Request, Response, Usage};
 use crate::strategy::{Isolated, Sampled};
 use crate::{Error, Result};
@@ -53,14 +53,15 @@ pub fn is_loopback(url: &str) -> bool {
     host.eq_ignore_ascii_case("localhost") || host.starts_with("127.") || host == "::1"
 }
 
-/// The provider for one `[classifiers.<name>]`, over real HTTP.
-pub fn build(c: &ClassifierConfig) -> Result<Box<dyn Provider>> {
+/// The provider for one `[classifiers.<name>]`, over real HTTP. Generative providers render the
+/// questions with `template` (the question set's).
+pub fn build(c: &ClassifierConfig, template: Template) -> Result<Box<dyn Provider>> {
     let timeout = Duration::from_secs(c.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
-    build_with(c, Arc::new(UreqHttp::new(timeout)))
+    build_with(c, Arc::new(UreqHttp::new(timeout)), template)
 }
 
 /// [`build`] over another transport (tests).
-pub fn build_with(c: &ClassifierConfig, http: Arc<dyn Http>) -> Result<Box<dyn Provider>> {
+pub fn build_with(c: &ClassifierConfig, http: Arc<dyn Http>, template: Template) -> Result<Box<dyn Provider>> {
     let timeout = Duration::from_secs(c.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
     let model = || {
         c.model
@@ -82,6 +83,7 @@ pub fn build_with(c: &ClassifierConfig, http: Arc<dyn Http>) -> Result<Box<dyn P
             model: c.model.clone().unwrap_or_else(|| DEFAULT_CLAUDE_MODEL.into()),
             effort: c.effort.clone(),
             timeout,
+            template,
         }),
         Kind::Command => Box::new(CommandProvider {
             program: c
@@ -106,6 +108,7 @@ pub fn build_with(c: &ClassifierConfig, http: Arc<dyn Http>) -> Result<Box<dyn P
             api_key: key("ANTHROPIC_API_KEY")?,
             effort: c.effort.clone(),
             retry,
+            template,
         }),
         Kind::OpenaiCompatible => Box::new(OpenAiCompatible {
             http,
@@ -123,6 +126,7 @@ pub fn build_with(c: &ClassifierConfig, http: Arc<dyn Http>) -> Result<Box<dyn P
             effort: c.effort.clone(),
             retry,
             logprobs: AtomicBool::new(true),
+            template,
         }),
     };
     // Jev already judges each question on its own and returns probabilities.
@@ -149,13 +153,15 @@ pub struct ClaudeCode {
     pub model: String,
     pub effort: Option<String>,
     pub timeout: Duration,
+    pub template: Template,
 }
 
 impl Provider for ClaudeCode {
     fn identity(&self) -> String {
+        let t = self.template.version();
         match &self.effort {
-            None => format!("claude-code:{}:{TEMPLATE_VERSION}", self.model),
-            Some(e) => format!("claude-code:{}@{e}:{TEMPLATE_VERSION}", self.model),
+            None => format!("claude-code:{}:{t}", self.model),
+            Some(e) => format!("claude-code:{}@{e}:{t}", self.model),
         }
     }
 
@@ -164,7 +170,7 @@ impl Provider for ClaudeCode {
     }
 
     fn classify(&self, context: &str, req: &Request) -> Result<Response> {
-        let schema = prompt::output_schema(req).to_string();
+        let schema = self.template.output_schema(req).to_string();
         let dir = tempfile::tempdir().map_err(Error::Spawn)?;
         let mut cmd = Command::new(&self.program[0]);
         cmd.args(&self.program[1..])
@@ -182,7 +188,7 @@ impl Provider for ClaudeCode {
         if let Some(e) = &self.effort {
             cmd.args(["--effort", e]);
         }
-        let out = run(cmd, prompt::render(context, req).as_bytes(), self.timeout)?;
+        let out = run(cmd, self.template.render(context, req).as_bytes(), self.timeout)?;
         let v: Value = serde_json::from_slice(&out.stdout).map_err(|_| {
             Error::Provider(format!(
                 "claude exited {} without JSON: {}",
@@ -190,12 +196,12 @@ impl Provider for ClaudeCode {
                 tail(&out.stdout, &out.stderr)
             ))
         })?;
-        read_claude(req, &v, &self.model)
+        read_claude(self.template, req, &v, &self.model)
     }
 }
 
 /// Read `claude -p --output-format json` output.
-pub fn read_claude(req: &Request, v: &Value, model: &str) -> Result<Response> {
+pub fn read_claude(template: Template, req: &Request, v: &Value, model: &str) -> Result<Response> {
     if v["is_error"].as_bool() == Some(true) || v["subtype"].as_str().is_some_and(|s| s != "success") {
         let msg = v["result"].as_str().unwrap_or("unknown error");
         return Err(Error::Provider(format!("claude: {msg}")));
@@ -224,7 +230,7 @@ pub fn read_claude(req: &Request, v: &Value, model: &str) -> Result<Response> {
             .sum(),
         output_tokens: u["output_tokens"].as_u64(),
     });
-    prompt::read_output(req, &answer, used.unwrap_or_else(|| model.to_string()), usage)
+    template.read_output(req, &answer, used.unwrap_or_else(|| model.to_string()), usage)
 }
 
 /// Any program: `{context, state, questions}` JSON on stdin, a [`Response`] on stdout.
@@ -371,37 +377,63 @@ mod tests {
 
     #[test]
     fn reads_claude_output() {
-        let set = QuestionSet::six_axis();
-        let req = set.request("s".into());
+        let set = QuestionSet::v2();
+        let req = set.request("s".into(), &[]);
         let v = json!({
             "type": "result", "subtype": "success", "is_error": false,
             "result": "", "structured_output": answers(&set),
             "usage": {"input_tokens": 10, "cache_read_input_tokens": 1000, "output_tokens": 50},
             "modelUsage": {"claude-haiku-5-5": {"outputTokens": 3}, "claude-sonnet-5-5": {"outputTokens": 50}},
         });
-        let r = read_claude(&req, &v, "sonnet").unwrap();
+        let r = read_claude(Template::V1, &req, &v, "sonnet").unwrap();
         assert_eq!(r.model, "claude-sonnet-5-5");
         assert_eq!(r.usage.unwrap().input_tokens, 1010);
         assert_eq!(r.answers.len(), 13);
 
         // JSON in `result` (fenced) works too.
         let v = json!({"subtype": "success", "result": format!("```json\n{}\n```", answers(&set))});
-        assert_eq!(read_claude(&req, &v, "sonnet").unwrap().model, "sonnet");
+        assert_eq!(read_claude(Template::V1, &req, &v, "sonnet").unwrap().model, "sonnet");
 
         let v = json!({"subtype": "success", "is_error": true, "result": "Failed to authenticate"});
         assert!(
-            read_claude(&req, &v, "sonnet")
+            read_claude(Template::V1, &req, &v, "sonnet")
                 .unwrap_err()
                 .to_string()
                 .contains("Failed to authenticate")
         );
     }
 
+    #[test]
+    fn reads_stated_probabilities_under_v3() {
+        let set = QuestionSet::v3();
+        let files = [crate::LayerFile::new("shop-web", "src/Profile.tsx", true, 46)];
+        let req = set.request("s".into(), &files);
+        let mut o = json!({});
+        for (id, q) in req.questions.iter() {
+            o[id] = match q {
+                crate::Question::Noul { .. } => json!(0.3),
+                _ => json!({"option": "ui", "p": 0.85}),
+            };
+        }
+        let v = json!({"subtype": "success", "is_error": false, "structured_output": o});
+        let r = read_claude(set.template, &req, &v, "claude-opus-5-5").unwrap();
+        assert_eq!(r.confidence_source, crate::ConfidenceSource::Stated);
+        assert_eq!(r.answers["file_1"].confidence(), Some(0.85));
+        let p = ClaudeCode {
+            program: vec!["claude".into()],
+            model: "claude-opus-5-5".into(),
+            effort: None,
+            timeout: Duration::from_secs(1),
+            template: set.template,
+        };
+        assert_eq!(p.identity(), "claude-code:claude-opus-5-5:pmx-prompt@2");
+    }
+
     #[cfg(unix)]
     #[test]
     fn runs_programs_with_a_timeout() {
-        let set = QuestionSet::six_axis();
-        let req = set.request("s".into());
+        let set = QuestionSet::v2();
+        let req = set.request("s".into(), &[]);
         let dir = tempfile::tempdir().unwrap();
         let fake = dir.path().join("fake-claude");
         let out = json!({"subtype": "success", "is_error": false, "structured_output": answers(&set),
@@ -419,6 +451,7 @@ mod tests {
             model: "claude-sonnet-5-5".into(),
             effort: Some("low".into()),
             timeout: Duration::from_secs(20),
+            template: Template::V1,
         };
         let r = p.classify(&set.context, &req).unwrap();
         assert_eq!(

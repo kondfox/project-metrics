@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use crate::provider::Provider;
+use crate::rubric::Reask;
 use crate::schema::{Answer, ConfidenceSource, Question, Questions, Request, Response, Usage};
 use crate::{Error, Result};
 
@@ -151,7 +152,75 @@ pub fn min_confidence(r: &Response) -> Option<f64> {
     if r.confidence_source == ConfidenceSource::None {
         return None;
     }
+    lowest_confidence(r)
+}
+
+/// The lowest confidence among the answers, whatever their source (`six-axis@3` gates every one).
+pub fn lowest_confidence(r: &Response) -> Option<f64> {
     r.answers.values().filter_map(Answer::confidence).reduce(f64::min)
+}
+
+/// Two answers to the same request, averaged (`six-axis@3`'s re-ask): P(yes) and every option's or
+/// level's probability are means; the choice is the option with the highest mean (the first
+/// answer's on a tie).
+pub fn average(req: &Request, a: &Response, b: &Response) -> Result<Response> {
+    let mut answers = BTreeMap::new();
+    for (id, _) in req.questions.iter() {
+        let (x, y) = match (a.answers.get(id), b.answers.get(id)) {
+            (Some(x), Some(y)) => (x, y),
+            _ => return Err(Error::Answer(format!("no answer to `{id}`"))),
+        };
+        let mean = |p: &BTreeMap<String, f64>, q: &BTreeMap<String, f64>| -> BTreeMap<String, f64> {
+            let mut m: BTreeMap<String, f64> = BTreeMap::new();
+            for (k, v) in p.iter().chain(q) {
+                *m.entry(k.clone()).or_default() += v / 2.0;
+            }
+            m
+        };
+        let avg = match (x, y) {
+            (Answer::Noul { noul: p }, Answer::Noul { noul: q }) => Answer::Noul { noul: (p + q) / 2.0 },
+            (
+                Answer::Choice {
+                    choice,
+                    probabilities: p,
+                    ..
+                },
+                Answer::Choice { probabilities: q, .. },
+            ) => {
+                let m = mean(p, q);
+                let first = m.get(choice).copied().unwrap_or(0.0);
+                let (top, share) = m
+                    .iter()
+                    .filter(|(_, v)| **v > first + 1e-12)
+                    .max_by(|a, b| a.1.total_cmp(b.1))
+                    .map(|(k, v)| (k.clone(), *v))
+                    .unwrap_or((choice.clone(), first));
+                Answer::Choice {
+                    choice: top,
+                    probabilities: m,
+                    confidence: Some(share),
+                }
+            }
+            (Answer::Score { probabilities: p, .. }, Answer::Score { probabilities: q, .. }) => {
+                let m = mean(p, q);
+                Answer::Score {
+                    score: m.iter().map(|(l, x)| l.parse::<f64>().unwrap_or(0.0) * x).sum(),
+                    confidence: Some(m.values().cloned().fold(0.0, f64::max)),
+                    probabilities: m,
+                }
+            }
+            _ => return Err(Error::Answer(format!("`{id}`: the two answers differ in type"))),
+        };
+        answers.insert(id.clone(), avg);
+    }
+    let mut usage = a.usage.clone();
+    add_usage(&mut usage, &b.usage);
+    Ok(Response {
+        model: a.model.clone(),
+        answers,
+        usage,
+        confidence_source: a.confidence_source,
+    })
 }
 
 /// The same request with every Score question's levels listed top-down (Jev tends to favour the
@@ -202,7 +271,8 @@ pub struct Gated {
     pub response: Response,
     /// Identity of the classifier whose answer was kept.
     pub classifier: String,
-    /// Asked again with the levels reordered.
+    /// Asked again: with the levels reordered (`@2`), or in a fresh call averaged with the first
+    /// answer (`@3`).
     #[serde(default)]
     pub reasked: bool,
     /// Sent to the fallback classifier.
@@ -213,18 +283,25 @@ pub struct Gated {
     pub low_confidence: bool,
 }
 
-/// The confidence gate (plan §6.4): below `gate`, re-ask once with the levels reordered; still
-/// below, ask `fallback` (when given: the caller has checked the data policy). Providers without a
-/// confidence (`confidence_source = none`) are never gated.
+/// The confidence gate (plan §6.4, §6.4.1). Below `gate`, re-ask once: `Reordered` (`six-axis@2`)
+/// lists the levels top-down and keeps the second answer, and never gates a provider without a
+/// confidence (`confidence_source = none`); `Averaged` (`six-axis@3`) asks again in a fresh call
+/// and averages the two, whatever the source. Still below, ask `fallback` (when given: the caller
+/// has checked the data policy).
 pub fn classify_gated(
     primary: &dyn Provider,
     fallback: Option<&dyn Provider>,
     gate: Option<f64>,
+    reask: Reask,
     context: &str,
     req: &Request,
 ) -> Result<Gated> {
     let first = primary.classify(context, req)?;
-    let below = |r: &Response| gate.is_some_and(|g| min_confidence(r).is_some_and(|c| c < g));
+    let confidence = |r: &Response| match reask {
+        Reask::Reordered => min_confidence(r),
+        Reask::Averaged => lowest_confidence(r),
+    };
+    let below = |r: &Response| gate.is_some_and(|g| confidence(r).is_some_and(|c| c < g - 1e-9));
     let done = |response: Response, by: &dyn Provider, reasked: bool, escalated: bool, low: bool| Gated {
         response,
         classifier: by.identity(),
@@ -235,7 +312,10 @@ pub fn classify_gated(
     if !below(&first) {
         return Ok(done(first, primary, false, false, false));
     }
-    let second = unreverse(req, primary.classify(context, &reversed(req))?);
+    let second = match reask {
+        Reask::Reordered => unreverse(req, primary.classify(context, &reversed(req))?),
+        Reask::Averaged => average(req, &first, &primary.classify(context, req)?)?,
+    };
     if !below(&second) {
         return Ok(done(second, primary, true, false, false));
     }
@@ -244,11 +324,11 @@ pub fn classify_gated(
         let low = below(&third);
         return Ok(done(third, fb, true, true, low));
     }
-    // Keep the surer of the two.
-    let best = if min_confidence(&second) > min_confidence(&first) {
-        second
-    } else {
-        first
+    let best = match reask {
+        // Keep the surer of the two.
+        Reask::Reordered if min_confidence(&second) > min_confidence(&first) => second,
+        Reask::Reordered => first,
+        Reask::Averaged => second,
     };
     Ok(done(best, primary, true, false, true))
 }
@@ -404,13 +484,13 @@ mod tests {
 
         // Sure at once: one call.
         let p = Scripted::new("p", vec![sure.clone()]);
-        let g = classify_gated(&p, None, Some(0.5), "", &req).unwrap();
+        let g = classify_gated(&p, None, Some(0.5), Reask::Reordered, "", &req).unwrap();
         assert!(!g.reasked && !g.escalated && !g.low_confidence);
         assert_eq!(p.seen.lock().unwrap().len(), 1);
 
         // Unsure, then sure with the levels reversed.
         let p = Scripted::new("p", vec![unsure.clone(), sure.clone()]);
-        let g = classify_gated(&p, None, Some(0.5), "", &req).unwrap();
+        let g = classify_gated(&p, None, Some(0.5), Reask::Reordered, "", &req).unwrap();
         assert!(g.reasked && !g.escalated);
         match p.seen.lock().unwrap()[1].questions.get("r").unwrap() {
             Question::Score { criteria, .. } => assert_eq!(criteria[0], "d", "asked top-down"),
@@ -420,25 +500,129 @@ mod tests {
         // Unsure twice: the fallback answers.
         let p = Scripted::new("p", vec![unsure.clone()]);
         let fb = Scripted::new("fb", vec![sure.clone()]);
-        let g = classify_gated(&p, Some(&fb), Some(0.5), "", &req).unwrap();
+        let g = classify_gated(&p, Some(&fb), Some(0.5), Reask::Reordered, "", &req).unwrap();
         assert!(g.escalated && !g.low_confidence);
         assert_eq!(g.classifier, "fb");
 
         // No fallback: kept, flagged.
-        let g = classify_gated(&p, None, Some(0.5), "", &req).unwrap();
+        let g = classify_gated(&p, None, Some(0.5), Reask::Reordered, "", &req).unwrap();
         assert!(g.low_confidence && g.classifier == "p");
 
         // No confidence to judge: never gated.
         let none = resp(1.0, [0.0, 1.0, 0.0, 0.0], None, 0.5, ConfidenceSource::None);
         let p = Scripted::new("p", vec![none]);
-        let g = classify_gated(&p, None, Some(0.99), "", &req).unwrap();
+        let g = classify_gated(&p, None, Some(0.99), Reask::Reordered, "", &req).unwrap();
         assert!(!g.reasked);
     }
 
     #[test]
     fn bundled_rubric_survives_reversal() {
-        let set = QuestionSet::six_axis();
-        let req = set.request("s".into());
+        let set = QuestionSet::v2();
+        let req = set.request("s".into(), &[]);
         assert_eq!(reversed(&reversed(&req)), req);
+    }
+
+    fn choice_q() -> Request {
+        Request {
+            state: "s".into(),
+            questions: Questions(vec![
+                (
+                    "n".into(),
+                    Question::Noul {
+                        instructions: "y?".into(),
+                    },
+                ),
+                (
+                    "file_1".into(),
+                    Question::Choice {
+                        instructions: "layer?".into(),
+                        criteria: crate::schema::Options(vec![
+                            ("ui".into(), "u".into()),
+                            ("service".into(), "s".into()),
+                        ]),
+                    },
+                ),
+            ]),
+        }
+    }
+
+    fn stated(noul: f64, choice: &str, p: f64, src: ConfidenceSource) -> Response {
+        Response {
+            model: "m".into(),
+            answers: [
+                ("n".to_string(), Answer::Noul { noul }),
+                (
+                    "file_1".to_string(),
+                    Answer::Choice {
+                        choice: choice.into(),
+                        probabilities: [(choice.to_string(), p)].into(),
+                        confidence: Some(p),
+                    },
+                ),
+            ]
+            .into(),
+            usage: None,
+            confidence_source: src,
+        }
+    }
+
+    #[test]
+    fn averages_two_answers() {
+        let req = choice_q();
+        let r = average(
+            &req,
+            &stated(0.6, "ui", 0.6, ConfidenceSource::Stated),
+            &stated(0.9, "service", 0.8, ConfidenceSource::Stated),
+        )
+        .unwrap();
+        assert!(matches!(r.answers["n"], Answer::Noul { noul } if (noul - 0.75).abs() < 1e-9));
+        match &r.answers["file_1"] {
+            Answer::Choice { choice, confidence, .. } => {
+                assert_eq!(choice, "service");
+                assert!((confidence.unwrap() - 0.4).abs() < 1e-9);
+            }
+            a => panic!("{a:?}"),
+        }
+        // The same option twice: its mean.
+        let r = average(
+            &req,
+            &stated(0.6, "ui", 0.6, ConfidenceSource::Stated),
+            &stated(0.6, "ui", 0.8, ConfidenceSource::Stated),
+        )
+        .unwrap();
+        assert!(
+            matches!(&r.answers["file_1"], Answer::Choice { choice, confidence: Some(c), .. } if choice == "ui" && (c - 0.7).abs() < 1e-9)
+        );
+    }
+
+    #[test]
+    fn averaged_gate_covers_every_source() {
+        let req = choice_q();
+        // Unsure yes/no (max(P, 1 − P) = 0.55), from a source without a confidence of its own.
+        let unsure = stated(0.55, "ui", 0.9, ConfidenceSource::None);
+        let sure = stated(0.95, "ui", 0.9, ConfidenceSource::None);
+        let p = Scripted::new("p", vec![unsure.clone(), sure.clone()]);
+        let g = classify_gated(&p, None, Some(0.7), Reask::Averaged, "", &req).unwrap();
+        assert!(g.reasked && !g.low_confidence, "{g:?}");
+        assert!(matches!(g.response.answers["n"], Answer::Noul { noul } if (noul - 0.75).abs() < 1e-9));
+        let seen = p.seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[1], req, "the same request, a fresh call");
+        drop(seen);
+
+        // Still unsure: the fallback, then flagged when there is none.
+        let p = Scripted::new("p", vec![unsure.clone()]);
+        let fb = Scripted::new("fb", vec![sure.clone()]);
+        let g = classify_gated(&p, Some(&fb), Some(0.7), Reask::Averaged, "", &req).unwrap();
+        assert!(g.escalated && g.classifier == "fb" && !g.low_confidence);
+        let g = classify_gated(&p, None, Some(0.7), Reask::Averaged, "", &req).unwrap();
+        assert!(g.low_confidence && g.reasked);
+        // No gate: one call.
+        let p = Scripted::new("p", vec![unsure]);
+        assert!(
+            !classify_gated(&p, None, None, Reask::Averaged, "", &req)
+                .unwrap()
+                .reasked
+        );
     }
 }

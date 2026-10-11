@@ -1,8 +1,8 @@
 # Velocity metrics — `six-axis@3` question prompts and classification types
 
-**Status: decided 2026-10-11 (owner approved as written), to be implemented** ([plan §6.4.1](tool-implementation-plan.md#641-six-axis3-decided-2026-10-11-to-be-implemented),
-D36). This page is the exact wording to be bundled as `crates/pm-llm/rubrics/six-axis@3.toml` and the
-prompt template `pmx-prompt@2`. Until it ships, runs score with `six-axis@2`. The metric itself
+**Status: decided 2026-10-11 (owner approved as written), implemented 2026-10-11** ([plan §6.4.1](tool-implementation-plan.md#641-six-axis3-decided-and-implemented-2026-10-11),
+D36). This page is the exact wording bundled as [`crates/pm-llm/rubrics/six-axis@3.toml`](../crates/pm-llm/rubrics/six-axis@3.toml)
+and the prompt template `pmx-prompt@2`; `@3` is the default rubric (`[velocity] rubric` selects another). The metric itself
 (points, FTE-days, coverage) is defined in [metrics-spec.md §4](metrics-spec.md#4-velocity-fleet-headline--velocity-indexmd);
 the rationale in [velocity-index.md](velocity-index.md).
 

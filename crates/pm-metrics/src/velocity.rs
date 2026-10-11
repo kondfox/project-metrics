@@ -41,6 +41,10 @@ pub struct Package {
     /// Still below the confidence gate.
     #[serde(default)]
     pub low_confidence: bool,
+    /// Files that would have been asked for a layer but were beyond the cap (`six-axis@3` R1:
+    /// unknown, not counted).
+    #[serde(default)]
+    pub unknown_files: u32,
     /// The person of an author-week package; replaced by a pseudonym before writing.
     #[serde(skip)]
     #[cfg_attr(feature = "ts", ts(skip))]
@@ -244,6 +248,7 @@ mod tests {
             model: None,
             escalated: false,
             low_confidence: false,
+            unknown_files: 0,
             author: None,
             authors: Default::default(),
         };

@@ -19,10 +19,7 @@ pub enum Question {
         criteria: Vec<String>,
     },
     /// One of the named options.
-    Choice {
-        instructions: String,
-        criteria: BTreeMap<String, String>,
-    },
+    Choice { instructions: String, criteria: Options },
 }
 
 impl Question {
@@ -79,6 +76,55 @@ impl<'de> Deserialize<'de> for Questions {
     }
 }
 
+/// A choice question's options (name → description), in the order they are listed (a JSON object
+/// on the wire).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Options(pub Vec<(String, String)>);
+
+impl Options {
+    pub fn contains_key(&self, name: &str) -> bool {
+        self.0.iter().any(|(k, _)| k == name)
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.0.iter().map(|(k, _)| k)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &(String, String)> {
+        self.0.iter()
+    }
+}
+
+impl Serialize for Options {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let mut m = s.serialize_map(Some(self.0.len()))?;
+        for (k, d) in &self.0 {
+            m.serialize_entry(k, d)?;
+        }
+        m.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Options {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = Options;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a map of options")
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> Result<Options, A::Error> {
+                let mut out = Vec::new();
+                while let Some((k, v)) = a.next_entry()? {
+                    out.push((k, v));
+                }
+                Ok(Options(out))
+            }
+        }
+        d.deserialize_map(V)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
     /// The work package, as text or JSON.
@@ -111,10 +157,11 @@ pub enum Answer {
 }
 
 impl Answer {
+    /// max(P, 1 − P) for yes/no; the chosen level's or option's probability otherwise.
     pub fn confidence(&self) -> Option<f64> {
         match self {
             Answer::Score { confidence, .. } | Answer::Choice { confidence, .. } => *confidence,
-            Answer::Noul { noul } => Some((noul - 0.5).abs() * 2.0),
+            Answer::Noul { noul } => Some(noul.max(1.0 - noul)),
         }
     }
 }
@@ -126,6 +173,9 @@ pub enum ConfidenceSource {
     Model,
     Logprobs,
     Sampled,
+    /// The model wrote each probability in its answer (`claude-code`, `anthropic` under
+    /// `pmx-prompt@2`). A model that only writes 0 or 1 degrades to plain yes/no.
+    Stated,
     /// One answer, one-hot probabilities: confidence rules fall back to the plain answer.
     #[default]
     None,
@@ -163,6 +213,16 @@ mod tests {
         let r: Request = serde_json::from_str(req).unwrap();
         let ids: Vec<&str> = r.questions.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(ids, ["z_first", "a_second", "kind"], "asked in the given order");
+        match r.questions.get("kind") {
+            Some(Question::Choice { criteria, .. }) => {
+                assert_eq!(
+                    criteria.keys().collect::<Vec<_>>(),
+                    ["fix", "feature"],
+                    "options keep their order"
+                )
+            }
+            q => panic!("{q:?}"),
+        }
         let again: Request = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
         assert_eq!(again, r);
 
@@ -173,6 +233,6 @@ mod tests {
         let r: Response = serde_json::from_str(resp).unwrap();
         assert_eq!(r.confidence_source, ConfidenceSource::None);
         assert_eq!(r.answers["z_first"].confidence(), Some(0.55));
-        assert!((r.answers["a_second"].confidence().unwrap() - 0.82).abs() < 1e-9);
+        assert!((r.answers["a_second"].confidence().unwrap() - 0.91).abs() < 1e-9);
     }
 }

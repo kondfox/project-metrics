@@ -10,7 +10,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
 use pm_config::Workspace;
-use pm_llm::{Axes, QuestionSet};
+use pm_llm::Axes;
 use serde::Deserialize;
 
 use crate::cache::Cache;
@@ -246,12 +246,159 @@ fn pct(n: usize, of: usize) -> Option<f64> {
     (of > 0).then(|| 100.0 * n as f64 / of as f64)
 }
 
+/// This project's packages named by `ids`, prepared for `classifier` exactly as `collect` prepares
+/// them.
+struct Matched<'w> {
+    set: pm_llm::QuestionSet,
+    classifiers: Classifiers<'w>,
+    /// Matched id (the one asked for), the package as prepared, local-only.
+    todo: Vec<(String, Prepared, bool)>,
+    /// Ids with no package in the repos (grouping or window differs).
+    missing: Vec<String>,
+    /// Packages the data policy kept from the classifier.
+    refused: usize,
+}
+
+fn matched<'w>(
+    ws: &'w Workspace,
+    ids: &[&str],
+    classifier: &str,
+    as_of: chrono::NaiveDate,
+    use_cache: bool,
+) -> Result<Matched<'w>> {
+    let config = &ws.config;
+    if !config.classifiers.contains_key(classifier) {
+        bail!("no [classifiers.{classifier}] in pmx.toml");
+    }
+    let wanted: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
+    if wanted.is_empty() {
+        bail!("no packages listed for project `{}`", config.project.name);
+    }
+    let mut copts = CollectOptions::new(as_of);
+    copts.fetch = false;
+    let plans = plan(ws, &copts)?;
+    let mut vrepos = repos(ws, &plans);
+    for r in &mut vrepos {
+        r.classifier = Some(classifier.to_string());
+    }
+    let cls = config.classifier(pm_classify::TestRules::Spec);
+    let identity = pm_config::Identity::new(&config.people);
+    let settings = VelocitySettings {
+        ws,
+        as_of,
+        classifier: &cls,
+        identity: &identity,
+        use_cache,
+        progress: pm_progress::Progress::off(),
+    };
+    let stored = crate::pulls::stored(ws)?;
+    let mut prs = crate::velocity::PrIndex::new(ws, &stored.repos, stored.missing);
+    prs.add_merges(&vrepos, config.project.range_start)?;
+    let (packages, gits) = read_packages(&settings, &vrepos, &prs, config.project.range_start)?;
+    let set = crate::velocity::rubric(ws)?;
+    let classifiers = Classifiers::build(config, [classifier], set.template);
+    let provider = classifiers.get(classifier).map_err(|e| anyhow!(e))?;
+
+    // Exact ids first. An author-week id that names a person by a raw git name (the prototype's
+    // ids; `[people]` may call them differently) matches through the package's aliases, unless
+    // several listed ids point at one package: `[people]` merged what the list scored apart, so
+    // neither compares like for like.
+    let mut matched: Vec<(&str, &crate::velocity::WorkPackage)> = Vec::new();
+    let mut found = std::collections::BTreeSet::new();
+    let mut by_alias: BTreeMap<String, Vec<&crate::velocity::WorkPackage>> = BTreeMap::new();
+    for wp in &packages {
+        match wanted.get(wp.id.as_str()) {
+            Some(id) => {
+                found.insert(*id);
+                matched.push((id, wp));
+            }
+            None => {
+                for a in wp.aliases() {
+                    by_alias.entry(a).or_default().push(wp);
+                }
+            }
+        }
+    }
+    let mut alias_ids: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for id in &wanted {
+        if found.contains(id) {
+            continue;
+        }
+        if let Some([wp]) = by_alias.get(*id).map(Vec::as_slice) {
+            alias_ids.entry(wp.id.as_str()).or_default().push(id);
+        }
+    }
+    for wp in &packages {
+        if let Some([id]) = alias_ids.get(wp.id.as_str()).map(Vec::as_slice) {
+            found.insert(*id);
+            matched.push((id, wp));
+        }
+    }
+
+    let mut todo = Vec::new();
+    let mut refused = 0;
+    for (id, wp) in matched {
+        let (prepared, _, local_only) = prepare_package(wp, &vrepos, &gits, &cls, &set)?;
+        if local_only && !provider.local() {
+            refused += 1;
+            continue;
+        }
+        todo.push((id.to_string(), prepared, local_only));
+    }
+    let missing = wanted
+        .iter()
+        .filter(|id| !found.contains(**id))
+        .map(|s| s.to_string())
+        .collect();
+    Ok(Matched {
+        set,
+        classifiers,
+        todo,
+        missing,
+        refused,
+    })
+}
+
+impl Matched<'_> {
+    /// One answer per package, through the answer cache when `use_cache` (`collect` shares it).
+    fn score(&self, ws: &Workspace, classifier: &str, use_cache: bool) -> Vec<Result<pm_llm::Gated>> {
+        let config = &ws.config;
+        let workers = config.classifiers[classifier].jobs.unwrap_or(4).clamp(1, 32);
+        let cache_path = ws.state_dir().join("cache.sqlite");
+        let set = &self.set;
+        pool(
+            &self.todo,
+            workers,
+            |(id, prepared, local_only)| -> Result<pm_llm::Gated> {
+                let key = self
+                    .classifiers
+                    .key(classifier, *local_only)
+                    .map(|k| answer_key(&config.project.name, id, &prepared.state, &set.id, &k))
+                    .map_err(|e| anyhow!(e))?;
+                let cache = if use_cache {
+                    Some(Cache::open(&cache_path)?)
+                } else {
+                    None
+                };
+                let primary = self.classifiers.get(classifier).map_err(|e| anyhow!(e))?;
+                if let Some(c) = &cache {
+                    if let Some(g) = cached_answer(c, &key, &primary.identity())? {
+                        return Ok(g);
+                    }
+                }
+                let g = self.classifiers.ask(classifier, *local_only, set, prepared)?;
+                if let Some(c) = &cache {
+                    c.put_answer(&key, &g)?;
+                }
+                Ok(g)
+            },
+        )
+    }
+}
+
 /// Score this workspace's share of the reference set with `opts.classifier`.
 pub fn eval(ws: &Workspace, reference: &[Reference], opts: &EvalOptions) -> Result<EvalReport> {
     let config = &ws.config;
-    if !config.classifiers.contains_key(&opts.classifier) {
-        bail!("no [classifiers.{}] in pmx.toml", opts.classifier);
-    }
     let wanted: BTreeMap<&str, &Reference> = reference
         .iter()
         .filter(|r| r.project == config.project.name)
@@ -263,122 +410,31 @@ pub fn eval(ws: &Workspace, reference: &[Reference], opts: &EvalOptions) -> Resu
             config.project.name
         );
     }
-    let mut copts = CollectOptions::new(opts.as_of);
-    copts.fetch = false;
-    let plans = plan(ws, &copts)?;
-    let mut vrepos = repos(ws, &plans);
-    for r in &mut vrepos {
-        r.classifier = Some(opts.classifier.clone());
-    }
-    let cls = config.classifier(pm_classify::TestRules::Spec);
-    let identity = pm_config::Identity::new(&config.people);
-    let settings = VelocitySettings {
-        ws,
-        as_of: opts.as_of,
-        classifier: &cls,
-        identity: &identity,
-        use_cache: opts.use_cache,
-        progress: pm_progress::Progress::off(),
-    };
-    let stored = crate::pulls::stored(ws)?;
-    let mut prs = crate::velocity::PrIndex::new(ws, &stored.repos, stored.missing);
-    prs.add_merges(&vrepos, config.project.range_start)?;
-    let (packages, gits) = read_packages(&settings, &vrepos, &prs, config.project.range_start)?;
-    let classifiers = Classifiers::build(config, [opts.classifier.as_str()]);
-    let provider = classifiers.get(&opts.classifier).map_err(|e| anyhow!(e))?;
-    let set = QuestionSet::six_axis();
-
+    let ids: Vec<&str> = wanted.keys().copied().collect();
+    let m = matched(ws, &ids, &opts.classifier, opts.as_of, opts.use_cache)?;
+    let set = &m.set;
     let mut report = EvalReport {
-        classifier: provider.identity(),
+        classifier: m.classifiers.get(&opts.classifier).map_err(|e| anyhow!(e))?.identity(),
         project: config.project.name.clone(),
         reference: wanted.len(),
+        missing: m.missing.clone(),
+        refused: m.refused,
         ..Default::default()
     };
-    // Exact ids first. An author-week id that names a person by a raw git name (the prototype's
-    // ids; `[people]` may call them differently) matches through the package's aliases, unless
-    // several reference rows point at one package: `[people]` merged what the reference scored
-    // apart, so neither compares like for like.
-    let mut matched: Vec<(&Reference, &crate::velocity::WorkPackage)> = Vec::new();
-    let mut found = std::collections::BTreeSet::new();
-    let mut by_alias: BTreeMap<String, Vec<&crate::velocity::WorkPackage>> = BTreeMap::new();
-    for wp in &packages {
-        match wanted.get(wp.id.as_str()) {
-            Some(r) => {
-                found.insert(wp.id.clone());
-                matched.push((r, wp));
-            }
-            None => {
-                for a in wp.aliases() {
-                    by_alias.entry(a).or_default().push(wp);
-                }
-            }
-        }
-    }
-    let mut alias_rows: BTreeMap<&str, Vec<&Reference>> = BTreeMap::new();
-    for (id, r) in &wanted {
-        if found.contains(*id) {
-            continue;
-        }
-        if let Some([wp]) = by_alias.get(*id).map(Vec::as_slice) {
-            alias_rows.entry(wp.id.as_str()).or_default().push(r);
-        }
-    }
-    for wp in &packages {
-        if let Some([r]) = alias_rows.get(wp.id.as_str()).map(Vec::as_slice) {
-            found.insert(r.id.clone());
-            matched.push((r, wp));
-        }
-    }
-
-    let mut todo: Vec<(&Reference, Prepared, bool)> = Vec::new();
-    for (r, wp) in matched {
-        let (prepared, _, local_only) = prepare_package(wp, &vrepos, &gits, &cls)?;
-        if local_only && !provider.local() {
-            report.refused += 1;
-            continue;
-        }
-        todo.push((r, prepared, local_only));
-    }
-    report.missing = wanted
-        .keys()
-        .filter(|id| !found.contains(**id))
-        .map(|s| s.to_string())
-        .collect();
-
+    let first = m.score(ws, &opts.classifier, opts.use_cache);
     let workers = config.classifiers[&opts.classifier].jobs.unwrap_or(4).clamp(1, 32);
-    let cache_path = ws.state_dir().join("cache.sqlite");
-    let first = pool(&todo, workers, |(r, prepared, local_only)| -> Result<pm_llm::Gated> {
-        let key = classifiers
-            .key(&opts.classifier, *local_only)
-            .map(|k| answer_key(&config.project.name, &r.id, &prepared.state, &set.id, &k))
-            .map_err(|e| anyhow!(e))?;
-        let cache = if opts.use_cache {
-            Some(Cache::open(&cache_path)?)
-        } else {
-            None
-        };
-        if let Some(c) = &cache {
-            if let Some(g) = cached_answer(c, &key, &provider.identity())? {
-                return Ok(g);
-            }
-        }
-        let g = classifiers.ask(&opts.classifier, *local_only, &set, prepared)?;
-        if let Some(c) = &cache {
-            c.put_answer(&key, &g)?;
-        }
-        Ok(g)
-    });
     let second: Vec<Option<Result<pm_llm::Gated>>> = if opts.runs >= 2 {
-        pool(&todo, workers, |(_, prepared, local_only)| {
-            classifiers.ask(&opts.classifier, *local_only, &set, prepared)
+        pool(&m.todo, workers, |(_, prepared, local_only)| {
+            m.classifiers.ask(&opts.classifier, *local_only, set, prepared)
         })
         .into_iter()
         .map(Some)
         .collect()
     } else {
-        (0..todo.len()).map(|_| None).collect()
+        (0..m.todo.len()).map(|_| None).collect()
     };
-    for (((r, prepared, _), a), b) in todo.iter().zip(first).zip(second) {
+    for (((id, prepared, _), a), b) in m.todo.iter().zip(first).zip(second) {
+        let r = wanted[id.as_str()];
         match a {
             Ok(g) => {
                 let candidate = set.axes(&g.response.answers, &prepared.facts)?;
@@ -403,6 +459,76 @@ pub fn eval(ws: &Workspace, reference: &[Reference], opts: &EvalOptions) -> Resu
         }
     }
     Ok(report)
+}
+
+/// Package ids to score: a CSV with an `id` column (rows of other projects skipped when it has a
+/// `project` column), or one id per line.
+pub fn read_ids(path: &Path, project: &str) -> Result<Vec<String>> {
+    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+    let first = lines.next().unwrap_or("");
+    let header: Vec<&str> = first.split(',').map(str::trim).collect();
+    let Some(id_col) = header.iter().position(|h| *h == "id") else {
+        return Ok(std::iter::once(first).chain(lines).map(String::from).collect());
+    };
+    let project_col = header.iter().position(|h| *h == "project");
+    Ok(lines
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split(',').map(str::trim).collect();
+            if project_col.is_some_and(|c| f.get(c) != Some(&project)) {
+                return None;
+            }
+            f.get(id_col).map(|s| s.to_string())
+        })
+        .collect())
+}
+
+/// What `pmx classifier score` did.
+#[derive(Debug, Default)]
+pub struct ScoreReport {
+    /// `project,id,R1..R6`: a reference set for `classifier eval`.
+    pub csv: String,
+    pub scored: usize,
+    pub missing: Vec<String>,
+    pub refused: usize,
+    pub failed: Vec<(String, String)>,
+}
+
+/// Score the listed packages of this project with `classifier`, one package per call, and write
+/// them as a reference set (real package ids, never pseudonyms).
+pub fn score(
+    ws: &Workspace,
+    ids: &[String],
+    classifier: &str,
+    as_of: chrono::NaiveDate,
+    use_cache: bool,
+) -> Result<ScoreReport> {
+    let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let m = matched(ws, &ids, classifier, as_of, use_cache)?;
+    let mut out = ScoreReport {
+        csv: "project,id,R1,R2,R3,R4,R5,R6\n".into(),
+        missing: m.missing.clone(),
+        refused: m.refused,
+        ..Default::default()
+    };
+    let project = &ws.config.project.name;
+    if project.contains(',') {
+        bail!("project name `{project}` has a comma: cannot write CSV");
+    }
+    for ((id, prepared, _), g) in m.todo.iter().zip(m.score(ws, classifier, use_cache)) {
+        match g.and_then(|g| Ok(m.set.axes(&g.response.answers, &prepared.facts)?)) {
+            Ok(a) => {
+                let a = a.0;
+                out.csv.push_str(&format!(
+                    "{project},{id},{},{},{},{},{},{}\n",
+                    a[0], a[1], a[2], a[3], a[4], a[5]
+                ));
+                out.scored += 1;
+            }
+            Err(e) => out.failed.push((id.clone(), format!("{e:#}"))),
+        }
+    }
+    Ok(out)
 }
 
 /// The report as text.

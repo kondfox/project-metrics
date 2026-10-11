@@ -11,9 +11,10 @@ pub mod rubric;
 pub mod schema;
 pub mod strategy;
 
+pub use prompt::Template;
 pub use provider::{Provider, build, build_with, is_local, is_loopback};
-pub use rubric::{Axes, Facts, QuestionSet};
-pub use schema::{Answer, ConfidenceSource, Question, Questions, Request, Response, Usage};
+pub use rubric::{Axes, Facts, LayerFile, QuestionSet, Reask};
+pub use schema::{Answer, ConfidenceSource, Options, Question, Questions, Request, Response, Usage};
 pub use strategy::{Gated, classify_gated};
 
 #[derive(Debug, thiserror::Error)]

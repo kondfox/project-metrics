@@ -60,7 +60,7 @@ in the browser. A second command combines several projects into the **fleet view
 | D33 | **Fleet page = the dashboard app with a drill-down** (owner decision, M6): the same React bundle renders the fleet when its data is a fleet. `fleet.html` carries `fleet.json` and every project's `project.json` (never `leads.json`), so it stays one self-contained, shareable file (D17); a project row opens that project's dashboard in the same page (`#p=<key>&monthly&…`, cadence and range kept both ways). One WASM instance holds every project by key and pools any range (`fleet` op); a node check proves it reproduces every bucket of `fleet.json` | 2026-10-11 |
 | D34 | **Fleet row pooling** (owner decision, M6; `pm-metrics` `fleet`): flow ratios pool Σ numerators ÷ Σ denominators over every project; people stay per project (pseudonymous ids can't be matched across projects, so one person in two projects counts twice). AI-assisted pools only projects that attribute AI; peer review only projects with PR data; duplication joins the fleet's Quality only when every project measured it. Security shows the **worst** project (a gate, [quality-index.md](quality-index.md) §2). Velocity pools Σ points ÷ Σ FTE-days only when every scored project has the same rubric and classifiers and the same denominator (all FTE or all engineer-days), else "not comparable". Each pooled value records which projects fed it (shown as "2/3"); the table also counts projects per band, since a fleet scalar can hide one project falling | 2026-10-11 |
 | D35 | **Projects collected on different dates** (owner decision, M6): the fleet's as-of is the latest; an earlier project is marked "as of <date>" with a notice and a CLI warning, and its missing days count as missing, not zero | 2026-10-11 |
-| D36 | **`six-axis@3`** (owner decision, approved as written; to be implemented): the `@1` anchors asked as one yes/no per anchor with a probability from every provider (`stated` for `claude-code` / `anthropic`), level = highest clear yes (P ≥ 0.65), R1 from a per-file layer choice, R5 without folder counting, fixed worked examples; packages unchanged; validated Opus-`@3` vs Sonnet-`@3`. See §6.4.1 | 2026-10-11 |
+| D36 | **`six-axis@3`** (owner decision, approved as written; implemented 2026-10-11, the default rubric): the `@1` anchors asked as one yes/no per anchor with a probability from every provider (`stated` for `claude-code` / `anthropic`), level = highest clear yes (P ≥ 0.65), R1 from a per-file layer choice, R5 without folder counting, fixed worked examples; packages unchanged; validated Opus-`@3` vs Sonnet-`@3`. See §6.4.1 | 2026-10-11 |
 | D37 | **PR / MR packages** (owner decision): work packages take the first matching rule: the ticket id in the subject, else the merged PR/MR the commit belongs to, else author-week (spec §4). Untagged commits of a PR whose ticketed commits name one ticket join that ticket. The code-host fetch gains each PR's commits (GitHub: in the same GraphQL query; GitLab: `/merge_requests/:iid/commits`, only when a classifier is configured) and its merge/squash commit; commits match by SHA, else (rebased PRs) by author email + subject within a day, else (GitHub) a squash subject ending in `(#n)`, which works offline too. Stored PRs without commits are fetched again once. A repo without PR data falls back with a warning and a `velocity.health` mark. Velocity now runs after the pull stage | 2026-10-11 |
 | D38 | **PR membership from git where the host is silent** (owner decision): a GitLab instance returned empty commit lists for most merged MRs (`X-Total` > 0, empty body), and a moved repo's older MRs live in another project. So, after the host's own commit list, a merge commit decides membership: a merge whose SHA is a PR's landed SHA, or whose message names a PR, owns `merge^1..merge^2`'s non-merge commits (earliest merge wins; merges from long-lived branches skipped; MRs of another project path get `<repo>:<path>!<n>`). Then the rebase match and `(#n)` (spec §4 rule 2) | 2026-10-11 |
 | D10 | The parity harness is a workspace crate (`pmx-parity`, not published) that reads the golden set from `PMX_GOLDEN_DIR` and prints to the terminal only. It runs twice: in the **prototype dialect** (the prototype's test rules and git reading) every M1 series must match exactly; in the spec dialect the intentional differences are reported | 2026-10-09 |
@@ -441,7 +441,7 @@ $0.35. One package is one call (70–500 ms).
 ⟂ **spec change (§10.3):** the output contract `{id, R1..R6, description}` stays as it is, but it is now
 derived from schema answers. The rubric version bump (`six-axis@2`) invalidates the score cache.
 
-### 6.4.1 `six-axis@3` (decided 2026-10-11, to be implemented)
+### 6.4.1 `six-axis@3` (decided and implemented 2026-10-11)
 
 **Why a new version.** The first evals on the pilot projects (private; method in "M5 progress") failed
 for Sonnet *and* for Opus under `six-axis@2`: both scored a third to a half more points than the Opus
@@ -502,6 +502,34 @@ calls, not more of them.
 **Not comparable across versions.** `@2` and `@3` scores never pool (the fleet already requires one
 basis, D34). Switching versions re-scores every package: the rubric version is part of the answer cache
 key, so no `--full` is needed.
+
+**How it is built (2026-10-11).**
+- `six-axis@3.toml` sits next to `@2` (kept, so `@2` stays selectable and its cached answers readable).
+  `[velocity] rubric = "six-axis@2" | "six-axis@3"` picks one; the default is `@3`; `pmx check` rejects
+  an unknown id. A question set names its prompt template, and every generative provider's identity
+  (so the cache key) carries that template: `@2` keys are unchanged.
+- The per-file questions are built per package from the files `collect` already lists (class `prod` or
+  `other`, most changed lines first, at most 40). The count of eligible files beyond 40 is recorded per
+  package (`unknown_files` in `project.json`).
+- Confidence of a yes/no answer is max(P, 1 − P) for every rubric (it was |P − 0.5| · 2; only a `jev`
+  gate under `@2` sees the difference).
+- The `@3` gate re-asks in a fresh call and averages: P(yes) and each option's probability are means;
+  the choice is the option with the highest mean.
+- `openai-compatible` under `@3` reports `stated`, not `logprobs`: reading probabilities for stated
+  numbers and option names from token logprobs is not built yet.
+- `pmx classifier score <name> --ids <file> --out <csv>` scores listed packages one per call (through
+  the answer cache) and writes them as a `project,id,R1..R6` reference set with real ids, for the
+  model-against-model validation above.
+
+**First `@3` validation (2026-10-11, private pilots; method only).** A fresh sample per pilot project
+from the current grouping (80 packages, stratified by month and package kind, fixed seed, ids only)
+was scored by Opus under `@3`, one package per call, with `classifier score`; Sonnet under `@3` was
+evaluated against it with `classifier eval` (D32 thresholds), and Opus against its own reference for
+test–retest. Sonnet passed on most but not all projects; where it failed, the weak axis had almost no
+spread in the reference (κ rests on a handful of packages) and Sonnet scored consistently below Opus.
+Both models had similar test–retest. **Owner decision:** Sonnet stays the production classifier for
+every pilot project (one basis, so the fleet keeps pooling, D34); its lower scores than Opus are a
+known bias. A human-labelled set remains the stronger check.
 
 ### 6.5 Qualifying a classifier
 

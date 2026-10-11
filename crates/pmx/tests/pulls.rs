@@ -284,7 +284,7 @@ fn velocity_packages_follow_merge_requests() {
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     let mut toml = std::fs::read_to_string(tmp.path().join("pmx.toml")).unwrap();
     toml.push_str(&format!(
-        "\n[classifiers.fake]\nprovider = \"command\"\ncommand = [\"sh\", \"{}\"]\n\n[velocity]\nclassifier = \"fake\"\n",
+        "\n[classifiers.fake]\nprovider = \"command\"\ncommand = [\"sh\", \"{}\"]\n\n[velocity]\nclassifier = \"fake\"\nrubric = \"six-axis@2\"\n",
         script.display()
     ));
     std::fs::write(tmp.path().join("pmx.toml"), toml).unwrap();

@@ -355,6 +355,10 @@ pub struct Velocity {
     /// how much history is sent; Velocity is null before it.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_date_str")]
     pub since: Option<NaiveDate>,
+    /// The question set packages are scored with, e.g. `six-axis@3` (default: the newest bundled
+    /// one). Part of the answer cache key: switching re-scores every package.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rubric: Option<String>,
 }
 
 /// `[people]`: canonical name → emails and code-host logins, plus `bots` and `externals`

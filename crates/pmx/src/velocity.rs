@@ -15,7 +15,7 @@ use chrono::{Datelike, NaiveDate};
 use pm_classify::{Classifier, FileClass};
 use pm_config::{DataPolicy, FteSource, Identity, RepoRole, Workspace, expand_path};
 use pm_git::{Commit, Git, LogRange};
-use pm_llm::{Facts, Provider, QuestionSet, Response};
+use pm_llm::{Facts, LayerFile, Provider, QuestionSet, Response};
 use pm_metrics::model::{VelocityDetail, VelocityHealth};
 use pm_metrics::velocity::{FtePeriod, Package, VelocityOptions};
 use pm_progress::Progress;
@@ -81,6 +81,12 @@ pub fn repos(ws: &Workspace, plans: &[crate::collect::RepoPlan]) -> Vec<Velocity
 }
 
 /// The first date scored: `[velocity] since`, but never before `range_start`.
+/// The question set packages are scored with: `[velocity] rubric`, else the default.
+pub fn rubric(ws: &Workspace) -> Result<QuestionSet> {
+    let id = ws.config.velocity.as_ref().and_then(|v| v.rubric.as_deref());
+    QuestionSet::bundled(id.unwrap_or(pm_llm::rubric::DEFAULT_RUBRIC)).map_err(|e| anyhow!("[velocity] rubric: {e}"))
+}
+
 pub fn since(ws: &Workspace) -> NaiveDate {
     let c = &ws.config;
     let start = c.project.range_start;
@@ -470,9 +476,19 @@ pub struct Prepared {
     pub truncated: bool,
     pub repos: Vec<String>,
     pub description: String,
+    /// The changed files, for the per-file layer questions (`six-axis@3`).
+    pub files: Vec<LayerFile>,
+    /// Files beyond the layer-question cap (unknown layer).
+    pub unknown_files: u32,
 }
 
-fn prepare(p: &WorkPackage, repos: &[VelocityRepo], gits: &[Git], cls: &Classifier) -> Result<Prepared> {
+fn prepare(
+    p: &WorkPackage,
+    repos: &[VelocityRepo],
+    gits: &[Git],
+    cls: &Classifier,
+    set: &QuestionSet,
+) -> Result<Prepared> {
     struct FileRow {
         class: FileClass,
         role: String,
@@ -580,12 +596,26 @@ fn prepare(p: &WorkPackage, repos: &[VelocityRepo], gits: &[Git], cls: &Classifi
         state["pr"] = json!(pr);
     }
     let first = subjects.first().copied().unwrap_or("");
+    let layer_files: Vec<LayerFile> = files
+        .iter()
+        .map(|((repo, path), f)| LayerFile {
+            repo: repo.clone(),
+            path: path.clone(),
+            asked: matches!(f.class, FileClass::Prod | FileClass::Other),
+            lines: f.added + f.deleted,
+        })
+        .collect();
+    let (asked, unknown_files) = set.layer_files(&layer_files);
+    let asked = asked.len() as u32;
     Ok(Prepared {
         state: serde_json::to_string_pretty(&state)?,
         facts: Facts {
             files: files.len() as u32,
             modules: modules.len() as u32,
+            layer_files: asked,
         },
+        files: layer_files,
+        unknown_files,
         added: source_added,
         tests,
         truncated,
@@ -633,7 +663,11 @@ pub struct Classifiers<'a> {
 
 impl<'a> Classifiers<'a> {
     /// `names` and their fallbacks.
-    pub fn build<'n>(config: &'a pm_config::Config, names: impl IntoIterator<Item = &'n str>) -> Classifiers<'a> {
+    pub fn build<'n>(
+        config: &'a pm_config::Config,
+        names: impl IntoIterator<Item = &'n str>,
+        template: pm_llm::Template,
+    ) -> Classifiers<'a> {
         let mut providers = BTreeMap::new();
         let mut todo: Vec<String> = names.into_iter().map(String::from).collect();
         while let Some(name) = todo.pop() {
@@ -647,7 +681,7 @@ impl<'a> Classifiers<'a> {
             if let Some(f) = &c.fallback {
                 todo.push(f.clone());
             }
-            providers.insert(name, pm_llm::build(c).map_err(|e| e.to_string()));
+            providers.insert(name, pm_llm::build(c, template).map_err(|e| e.to_string()));
         }
         Classifiers { config, providers }
     }
@@ -687,9 +721,9 @@ impl<'a> Classifiers<'a> {
         let primary = self.get(name).map_err(|e| anyhow!(e))?;
         let gate = self.config.classifiers.get(name).and_then(|c| c.confidence_gate);
         let fallback = self.fallback(name, local_only);
-        let req = set.request(prepared.state.clone());
-        let once = || pm_llm::classify_gated(primary, fallback, gate, &set.context, &req);
-        let g = once().or_else(|e| {
+        let req = set.request(prepared.state.clone(), &prepared.files);
+        let once = || pm_llm::classify_gated(primary, fallback, gate, set.reask(), &set.context, &req);
+        let mut g = once().or_else(|e| {
             if matches!(e, pm_llm::Error::Answer(_) | pm_llm::Error::Timeout(_)) {
                 std::thread::sleep(Duration::from_secs(2));
                 once()
@@ -697,6 +731,8 @@ impl<'a> Classifiers<'a> {
                 Err(e)
             }
         })?;
+        // Only what was asked is kept (a `command` may answer more).
+        g.response.answers.retain(|id, _| req.questions.get(id).is_some());
         set.axes(&g.response.answers, &prepared.facts)?;
         Ok(g)
     }
@@ -759,8 +795,9 @@ pub fn prepare_package(
     repos: &[VelocityRepo],
     gits: &[Git],
     cls: &Classifier,
+    set: &QuestionSet,
 ) -> Result<(Prepared, Option<String>, bool)> {
-    let prepared = prepare(wp, repos, gits, cls)?;
+    let prepared = prepare(wp, repos, gits, cls, set)?;
     let local_only = wp.commits.iter().any(|c| repos[c.repo].local_only);
     Ok((prepared, pick_classifier(wp, repos), local_only))
 }
@@ -786,6 +823,7 @@ fn row(wp: &WorkPackage, prepared: &Prepared) -> Package {
         model: None,
         escalated: false,
         low_confidence: false,
+        unknown_files: prepared.unknown_files,
         author: wp.author.clone(),
         authors,
     }
@@ -806,11 +844,15 @@ pub fn run_stage(s: &VelocitySettings, repos: &[VelocityRepo], mut prs: PrIndex)
         return Ok(None);
     }
     let config = &s.ws.config;
-    let set = QuestionSet::six_axis();
+    let set = rubric(s.ws)?;
     let since = since(s.ws);
     p.start(VELOCITY);
     p.detail(VELOCITY, "reading commits".to_string());
-    let classifiers = Classifiers::build(config, repos.iter().filter_map(|r| r.classifier.as_deref()));
+    let classifiers = Classifiers::build(
+        config,
+        repos.iter().filter_map(|r| r.classifier.as_deref()),
+        set.template,
+    );
     for (name, built) in &classifiers.providers {
         if let Err(e) = built {
             p.warn(format!(
@@ -845,7 +887,7 @@ pub fn run_stage(s: &VelocitySettings, repos: &[VelocityRepo], mut prs: PrIndex)
     let mut refused = 0usize;
     let mut cached = 0u64;
     for (index, wp) in packages.iter().enumerate() {
-        let (prepared, name, local_only) = prepare_package(wp, repos, &gits, s.classifier)?;
+        let (prepared, name, local_only) = prepare_package(wp, repos, &gits, s.classifier, &set)?;
         rows.push(row(wp, &prepared));
         let Some(name) = name else {
             p.advance(VELOCITY, 1);
@@ -1028,8 +1070,8 @@ pub fn smoke_test(ws: &Workspace, name: &str) -> Result<(pm_llm::Axes, Response,
         .classifiers
         .get(name)
         .ok_or_else(|| anyhow!("no [classifiers.{name}] in pmx.toml"))?;
-    let provider = pm_llm::build(c)?;
-    let set = QuestionSet::six_axis();
+    let set = rubric(ws)?;
+    let provider = pm_llm::build(c, set.template)?;
     let state = json!({
         "ticket": "SHOP-1",
         "repos": ["shop-api"],
@@ -1043,8 +1085,18 @@ pub fn smoke_test(ws: &Workspace, name: &str) -> Result<(pm_llm::Axes, Response,
         "diff": "### shop-api 0000000000 SHOP-1 Add an optional nickname to customers\n--- a/src/customers/customer.ts\n+++ b/src/customers/customer.ts\n@@ -4,4 +4,6 @@ export class Customer {\n   @Column() name: string;\n+  @Column({ nullable: true })\n+  nickname?: string;\n }\n--- a/src/customers/customer.dto.ts\n+++ b/src/customers/customer.dto.ts\n@@ -2,3 +2,4 @@ export interface CustomerDto {\n   name: string;\n+  nickname?: string;\n }\n",
     });
     let started = Instant::now();
-    let r = provider.classify(&set.context, &set.request(serde_json::to_string_pretty(&state)?))?;
-    let axes = set.axes(&r.answers, &Facts { files: 2, modules: 1 })?;
+    let files = [
+        LayerFile::new("shop-api", "src/customers/customer.ts", true, 2),
+        LayerFile::new("shop-api", "src/customers/customer.dto.ts", true, 1),
+    ];
+    let req = set.request(serde_json::to_string_pretty(&state)?, &files);
+    let r = provider.classify(&set.context, &req)?;
+    let facts = Facts {
+        files: 2,
+        modules: 1,
+        layer_files: set.layer_files(&files).0.len() as u32,
+    };
+    let axes = set.axes(&r.answers, &facts)?;
     Ok((axes, r, started.elapsed()))
 }
 

@@ -44,4 +44,9 @@ escalated: boolean,
 /**
  * Still below the confidence gate.
  */
-low_confidence: boolean, };
+low_confidence: boolean, 
+/**
+ * Files that would have been asked for a layer but were beyond the cap (`six-axis@3` R1:
+ * unknown, not counted).
+ */
+unknown_files: number, };

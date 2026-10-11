@@ -190,14 +190,15 @@ export function fixtureWithVelocity(): ProjectFile {
     size: points == null ? null : "M",
     tests: true,
     truncated: false,
-    classifier: "claude-code:claude-sonnet-5-5:pmx-prompt@1",
+    classifier: "claude-code:claude-sonnet-5-5:pmx-prompt@2",
     model: "claude-sonnet-5-5",
     escalated: false,
     low_confidence: false,
+    unknown_files: 0,
   });
   p.velocity = {
-    rubric: "six-axis@2",
-    classifiers: ["claude-code:claude-sonnet-5-5:pmx-prompt@1"],
+    rubric: "six-axis@3",
+    classifiers: ["claude-code:claude-sonnet-5-5:pmx-prompt@2"],
     models: ["claude-sonnet-5-5"],
     health: {
       packages: 3,

@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde_json::{Value, json};
 
 use crate::http::{Http, Retry};
-use crate::prompt::{self, TEMPLATE_VERSION};
+use crate::prompt::{self, Template};
 use crate::provider::Provider;
 use crate::schema::{Answer, ConfidenceSource, Question, Request, Response, Usage};
 use crate::{Error, Result};
@@ -79,14 +79,16 @@ pub struct Anthropic {
     pub api_key: String,
     pub effort: Option<String>,
     pub retry: Retry,
+    pub template: Template,
 }
 
 impl Provider for Anthropic {
     fn identity(&self) -> String {
         format!(
-            "anthropic:{}:{}:{TEMPLATE_VERSION}",
+            "anthropic:{}:{}:{}",
             self.model,
-            self.effort.as_deref().unwrap_or("default")
+            self.effort.as_deref().unwrap_or("default"),
+            self.template.version()
         )
     }
 
@@ -95,7 +97,7 @@ impl Provider for Anthropic {
     }
 
     fn classify(&self, context: &str, req: &Request) -> Result<Response> {
-        let mut output = json!({"format": {"type": "json_schema", "schema": prompt::strict_schema(req)}});
+        let mut output = json!({"format": {"type": "json_schema", "schema": self.template.strict_schema(req)}});
         if let Some(e) = &self.effort {
             output["effort"] = json!(e);
         }
@@ -103,7 +105,7 @@ impl Provider for Anthropic {
             "model": self.model,
             "max_tokens": ANTHROPIC_MAX_TOKENS,
             "system": prompt::SYSTEM,
-            "messages": [{"role": "user", "content": prompt::render(context, req)}],
+            "messages": [{"role": "user", "content": self.template.render(context, req)}],
             "output_config": output,
         });
         let mut headers = vec![
@@ -123,12 +125,12 @@ impl Provider for Anthropic {
             &body.to_string(),
         )?;
         let v: Value = serde_json::from_str(&text).map_err(|e| Error::Answer(format!("anthropic: {e}")))?;
-        read_anthropic(req, &v, &self.model)
+        read_anthropic(self.template, req, &v, &self.model)
     }
 }
 
 /// Read a Messages API response.
-pub fn read_anthropic(req: &Request, v: &Value, model: &str) -> Result<Response> {
+pub fn read_anthropic(template: Template, req: &Request, v: &Value, model: &str) -> Result<Response> {
     match v["stop_reason"].as_str() {
         Some("refusal") => {
             let category = v["stop_details"]["category"].as_str().unwrap_or("unspecified");
@@ -155,7 +157,7 @@ pub fn read_anthropic(req: &Request, v: &Value, model: &str) -> Result<Response>
         output_tokens: u["output_tokens"].as_u64(),
     });
     let answered = v["model"].as_str().unwrap_or(model).to_string();
-    prompt::read_output(req, &out, answered, usage)
+    template.read_output(req, &out, answered, usage)
 }
 
 /// Any OpenAI-compatible chat API (Ollama, vLLM, llama.cpp, LM Studio, OpenAI). Probabilities for
@@ -172,6 +174,7 @@ pub struct OpenAiCompatible {
     pub retry: Retry,
     /// Cleared after the server rejects `logprobs`.
     pub logprobs: AtomicBool,
+    pub template: Template,
 }
 
 impl OpenAiCompatible {
@@ -180,10 +183,10 @@ impl OpenAiCompatible {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": prompt::SYSTEM},
-                {"role": "user", "content": prompt::render(context, req)},
+                {"role": "user", "content": self.template.render(context, req)},
             ],
             "response_format": {"type": "json_schema", "json_schema": {
-                "name": "answers", "strict": true, "schema": prompt::strict_schema(req)}},
+                "name": "answers", "strict": true, "schema": self.template.strict_schema(req)}},
         });
         if let Some(t) = self.temperature {
             body["temperature"] = json!(t);
@@ -214,14 +217,16 @@ impl Provider for OpenAiCompatible {
     fn identity(&self) -> String {
         match &self.effort {
             None => format!(
-                "openai-compatible:{}:{}:{TEMPLATE_VERSION}",
+                "openai-compatible:{}:{}:{}",
                 base(&self.base_url),
-                self.model
+                self.model,
+                self.template.version()
             ),
             Some(e) => format!(
-                "openai-compatible:{}:{}@{e}:{TEMPLATE_VERSION}",
+                "openai-compatible:{}:{}@{e}:{}",
                 base(&self.base_url),
-                self.model
+                self.model,
+                self.template.version()
             ),
         }
     }
@@ -240,12 +245,13 @@ impl Provider for OpenAiCompatible {
             other => other?,
         };
         let v: Value = serde_json::from_str(&text).map_err(|e| Error::Answer(format!("openai-compatible: {e}")))?;
-        read_openai(req, &v, &self.model)
+        read_openai(self.template, req, &v, &self.model)
     }
 }
 
-/// Read a chat completion; fill level probabilities from logprobs where they can be found.
-pub fn read_openai(req: &Request, v: &Value, model: &str) -> Result<Response> {
+/// Read a chat completion; fill level probabilities from logprobs where they can be found
+/// (`pmx-prompt@1` level questions; `pmx-prompt@2` answers keep their stated probabilities).
+pub fn read_openai(template: Template, req: &Request, v: &Value, model: &str) -> Result<Response> {
     let choice = &v["choices"][0];
     let content = choice["message"]["content"]
         .as_str()
@@ -256,7 +262,7 @@ pub fn read_openai(req: &Request, v: &Value, model: &str) -> Result<Response> {
         input_tokens: v["usage"]["prompt_tokens"].as_u64().unwrap_or(0),
         output_tokens: v["usage"]["completion_tokens"].as_u64(),
     });
-    let mut r = prompt::read_output(req, &out, v["model"].as_str().unwrap_or(model).to_string(), usage)?;
+    let mut r = template.read_output(req, &out, v["model"].as_str().unwrap_or(model).to_string(), usage)?;
     if let Some(tokens) = choice["logprobs"]["content"].as_array() {
         let mut any = false;
         for (id, q) in req.questions.iter() {
@@ -344,7 +350,7 @@ mod tests {
 
     #[test]
     fn jev_passes_the_request_through() {
-        let set = QuestionSet::six_axis();
+        let set = QuestionSet::v2();
         let mut ans = json!({});
         for (id, q) in set.questions.iter() {
             ans[id] = match q {
@@ -365,7 +371,7 @@ mod tests {
             api_key: "k".into(),
             retry: retry(),
         };
-        let r = p.classify("ctx", &set.request("state".into())).unwrap();
+        let r = p.classify("ctx", &set.request("state".into(), &[])).unwrap();
         assert_eq!(r.confidence_source, ConfidenceSource::Model);
         assert_eq!(r.answers["r2_data_model"].confidence(), Some(0.5));
         let reqs = http.requests.lock().unwrap();
@@ -382,8 +388,8 @@ mod tests {
 
     #[test]
     fn anthropic_structured_output_and_refusals() {
-        let set = QuestionSet::six_axis();
-        let req = set.request("s".into());
+        let set = QuestionSet::v2();
+        let req = set.request("s".into(), &[]);
         let ok = json!({"model": "claude-sonnet-5-5", "stop_reason": "end_turn",
             "content": [{"type": "thinking", "thinking": ""}, {"type": "text", "text": answers(&set).to_string()}],
             "usage": {"input_tokens": 3000, "cache_read_input_tokens": 100, "output_tokens": 80}});
@@ -395,14 +401,12 @@ mod tests {
             api_key: "k".into(),
             effort: Some("low".into()),
             retry: retry(),
+            template: Template::V1,
         };
         let r = p.classify("ctx", &req).unwrap();
         assert_eq!(r.model, "claude-sonnet-5-5");
         assert_eq!(r.usage.unwrap().input_tokens, 3100);
-        assert_eq!(
-            p.identity(),
-            format!("anthropic:claude-sonnet-5-5:low:{TEMPLATE_VERSION}")
-        );
+        assert_eq!(p.identity(), "anthropic:claude-sonnet-5-5:low:pmx-prompt@1");
         let reqs = http.requests.lock().unwrap();
         let (url, headers, body) = &reqs[0];
         assert_eq!(url, "https://api.anthropic.com/v1/messages");
@@ -416,7 +420,7 @@ mod tests {
 
         let refused = json!({"stop_reason": "refusal", "stop_details": {"category": "cyber"}, "content": []});
         assert!(
-            read_anthropic(&req, &refused, "m")
+            read_anthropic(Template::V1, &req, &refused, "m")
                 .unwrap_err()
                 .to_string()
                 .contains("declined (cyber)")
@@ -425,8 +429,8 @@ mod tests {
 
     #[test]
     fn openai_logprobs_become_level_probabilities() {
-        let set = QuestionSet::six_axis();
-        let req = set.request("s".into());
+        let set = QuestionSet::v2();
+        let req = set.request("s".into(), &[]);
         let content = answers(&set).to_string();
         // Tokenize the answer one character at a time; the `r2_data_model` level gets alternatives.
         let at = content.find("\"r2_data_model\":").unwrap() + "\"r2_data_model\":".len();
@@ -444,7 +448,7 @@ mod tests {
             .collect();
         let v = json!({"model": "qwen3-coder:30b", "choices": [{"message": {"content": content},
             "logprobs": {"content": tokens}}], "usage": {"prompt_tokens": 5000, "completion_tokens": 90}});
-        let r = read_openai(&req, &v, "m").unwrap();
+        let r = read_openai(Template::V1, &req, &v, "m").unwrap();
         assert_eq!(r.confidence_source, ConfidenceSource::Logprobs);
         match &r.answers["r2_data_model"] {
             Answer::Score {
@@ -466,21 +470,21 @@ mod tests {
             .collect();
         thinking.extend(tokens.iter().cloned());
         let v2 = json!({"choices": [{"message": {"content": content}, "logprobs": {"content": thinking}}]});
-        match &read_openai(&req, &v2, "m").unwrap().answers["r2_data_model"] {
+        match &read_openai(Template::V1, &req, &v2, "m").unwrap().answers["r2_data_model"] {
             Answer::Score { probabilities, .. } => assert!((probabilities["1"] - 2.0 / 3.0).abs() < 1e-9),
             a => panic!("{a:?}"),
         }
         // Without logprobs: the plain answer.
         let v = json!({"choices": [{"message": {"content": content}}]});
         assert_eq!(
-            read_openai(&req, &v, "m").unwrap().confidence_source,
+            read_openai(Template::V1, &req, &v, "m").unwrap().confidence_source,
             ConfidenceSource::None
         );
     }
 
     #[test]
     fn openai_retries_without_logprobs_when_rejected() {
-        let set = QuestionSet::six_axis();
+        let set = QuestionSet::v2();
         let ok = json!({"choices": [{"message": {"content": answers(&set).to_string()}}]});
         let http = Arc::new(FakeHttp::new(vec![
             (400, "logprobs are not supported".into()),
@@ -494,10 +498,11 @@ mod tests {
             temperature: Some(0.0),
             effort: Some("none".into()),
             retry: retry(),
+            template: Template::V1,
             logprobs: AtomicBool::new(true),
         };
         assert!(p.local());
-        p.classify("ctx", &set.request("s".into())).unwrap();
+        p.classify("ctx", &set.request("s".into(), &[])).unwrap();
         let reqs = http.requests.lock().unwrap();
         assert_eq!(reqs[0].0, "http://localhost:11434/v1/chat/completions");
         assert_eq!(reqs[0].2["logprobs"], true);

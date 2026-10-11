@@ -1,0 +1,139 @@
+# The six-axis work-item complexity rubric, version 3 (plan §6.4.1, D36; exact wording in
+# wiki/velocity-metrics.md). The anchors are six-axis@1's, unchanged. Counting and the levels stay in
+# pmx, the same way for every provider:
+# - R2–R6 = the highest anchor k with P(yes) ≥ tau; none → 0. An anchor between 0.5 and tau is
+#   ambiguous and does not raise the level ("when two anchors fit, take the lower" as a rule).
+# - R1 = the distinct layers among the files' chosen options (`none` and unknown excluded):
+#   0–1 → 0, 2 → 1, 3–4 → 2, 5+ → 3. One choice per `prod` or `other` file, at most
+#   `max_layer_files` (the most added + deleted lines first); test and doc files are `none`.
+#
+# Never edit anchors, instructions or examples after scoring: any change is a new version.
+
+id = "six-axis@3"
+template = "pmx-prompt@2"
+tau = 0.65
+max_layer_files = 40
+
+context = """
+You judge one work package: the commits that delivered one ticket, or one developer's untracked \
+commits in one week. The state lists its commit subjects, the files changed (with their class and \
+stack role) and the diff, with generated files removed. Judge only what the diff delivers. Diff size \
+never raises an answer: a 40-line change to an ordering rule used by every list query outranks a \
+900-line change that adds one CRUD endpoint. Score delivered work, not effort. If the diff is marked \
+truncated, judge the part you can see together with the file list.
+
+Each yes/no question below describes one anchor of a scale. Answer yes only when the diff shows it. \
+Three worked examples follow; they show how the questions are meant, not what this package is.
+
+1. **Nickname on a customer** (`SHOP-12`, two repos): a nullable column added by a migration, the entity \
+and its mapping, the DTO and API response, a profile screen that shows it.
+   - R2: `r2_1` yes, `r2_2` no, `r2_3` no → 1
+   - R3: `r3_1` yes, `r3_2` no, `r3_3` no → 1
+   - R4: all no → 0
+   - R5: `r5_1` yes, `r5_2` no, `r5_3` no → 1
+   - R6: `r6_1` yes, `r6_2` no, `r6_3` no → 1
+   - Files: migration `database`, entity mapping `persistence`, DTO `transport`, screen `ui` → 4 layers → R1 = 2
+   - Sum 6 → M, 3 points
+2. **Due-date ordering everywhere** (`SHOP-31`): the shared query builder now sorts every list by due \
+date, nulls last; a unit test covers the null handling.
+   - R2: all no → 0
+   - R3: all no → 0 (the order of a list changes, no contract does)
+   - R4: `r4_1` yes, `r4_2` yes, `r4_3` no → 2
+   - R5: `r5_3` yes → 3
+   - R6: `r6_1` yes, `r6_2` yes, `r6_3` no → 2
+   - Files: query builder `persistence`, its test `none` → 1 layer → R1 = 0
+   - Sum 7 → M, 3 points
+3. **Typo in a button label** (author-week): one string in one component.
+   - R2–R6: every anchor no → all 0
+   - Files: the component `ui` → 1 layer → R1 = 0
+   - Sum 0 → XS, 1 point"""
+
+[[question]]
+id = "r2_1"
+type = "noul"
+instructions = "Does the change add a field or column to, or alter one on, an existing persistent structure (a database table, a stored document, a persisted entity)?"
+
+[[question]]
+id = "r2_2"
+type = "noul"
+instructions = "Does the change add a new table, entity, view, stored procedure or enum type to persistent storage?"
+
+[[question]]
+id = "r2_3"
+type = "noul"
+instructions = "Does the change rewrite persistent structure, make a destructive change to it (drop, rename, narrow a type), or add a migration that backfills or transforms existing rows?"
+
+[[question]]
+id = "r3_1"
+type = "noul"
+instructions = "Does the change add a field to an existing contract that a consumer outside the module sees (an API request or response, an event, a file format, data shown on a screen)?"
+
+[[question]]
+id = "r3_2"
+type = "noul"
+instructions = "Does the change add a new endpoint, screen, dialog or command that a consumer outside the module can use?"
+
+[[question]]
+id = "r3_3"
+type = "noul"
+instructions = "Does the change break an existing contract (remove or rename a field, change a type or its meaning, remove behaviour a consumer relies on), or add a new interface to an external system?"
+
+[[question]]
+id = "r4_1"
+type = "noul"
+instructions = "Does the changed code contain real conditional logic, branching, or a simple derivation of one value from others, beyond CRUD, declarative wiring or configuration?"
+
+[[question]]
+id = "r4_2"
+type = "noul"
+instructions = "Does the changed code contain a non-trivial algorithm: query composition, a parser, a sort or ordering rule, three-valued or nullable-as-unknown logic, or a non-obvious state machine?"
+
+[[question]]
+id = "r4_3"
+type = "noul"
+instructions = "Does the changed code have to keep an invariant that must hold in several places at once, coordinate concurrency or async work, or implement an external protocol the team does not control?"
+
+[[question]]
+id = "r5_1"
+type = "noul"
+instructions = "If this change were wrong, could it break behaviour beyond the changed file itself, within one module (the feature, package or component it belongs to)?"
+
+[[question]]
+id = "r5_2"
+type = "noul"
+instructions = "If this change were wrong, could it break behaviour in several modules (other features, packages, services or apps)?"
+
+[[question]]
+id = "r5_3"
+type = "noul"
+instructions = "Does the change alter application-wide behaviour: authentication or authorization, data sync, the schema, an ordering or filtering rule applied everywhere, or the build and release process?"
+
+[[question]]
+id = "r6_1"
+type = "noul"
+instructions = "Is more than a glance needed to be confident this change is correct, at least a manual check? Judge the need, not whether tests were written."
+
+[[question]]
+id = "r6_2"
+type = "noul"
+instructions = "Is a unit test required to be confident this change is correct? Judge the need, not whether tests were written."
+
+[[question]]
+id = "r6_3"
+type = "noul"
+instructions = "Is an integration, migration or end-to-end test required to be confident this change is correct? Judge the need, not whether tests were written."
+
+# R1: asked once per file as `file_1` … `file_<max_layer_files>`; `{repo}` and `{path}` are filled in.
+[layer]
+instructions = "Which architectural layer does the changed file `{repo}/{path}` belong to?"
+options = [
+  ["transport", "Transport or DTO: request and response shapes, controllers, route handlers, API clients, serializers, message formats."],
+  ["validation", "Input validation: validators, validation attributes or schemas, guards that reject bad input."],
+  ["service", "Service or application layer: use cases, services, handlers that orchestrate work."],
+  ["domain", "Domain: entities' behaviour, domain rules, value objects, business invariants."],
+  ["persistence", "Persistence code: repositories, ORM entity mappings, queries, data-access code."],
+  ["database", "Database objects: migrations, tables, views, stored procedures, indexes, SQL schema."],
+  ["ui", "User interface: components, screens, views, templates, styles, UI state."],
+  ["navigation", "Navigation: routes, menus, deep links, screen-to-screen flow."],
+  ["none", "None of these: tests, documentation, configuration, build scripts, tooling."],
+]

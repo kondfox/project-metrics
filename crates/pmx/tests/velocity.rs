@@ -13,25 +13,32 @@ use pm_config::Workspace;
 use pmx::{CollectOptions, collect};
 use serde_json::{Value, json};
 
-/// Answers every question; `layers` layer questions get yes.
-fn answers(layers: usize, r2: u8, r3: u8, r4: u8, r6: u8) -> Value {
+/// A `six-axis@3` answer: the anchors in `yes` at P 0.9 (the others 0.1), and `file_1` … `file_40`
+/// cycling through `layers` (only the asked files count).
+fn answers(yes: &[&str], layers: &[&str]) -> Value {
     let mut a = json!({});
-    for (i, id) in pm_llm::rubric::LAYERS.iter().enumerate() {
-        a[id] = json!({"type": "noul", "noul": if i < layers { 0.9 } else { 0.1 }});
+    for id in pm_llm::rubric::ANCHORS.iter().flatten() {
+        a[id] = json!({"type": "noul", "noul": if yes.contains(id) { 0.9 } else { 0.1 }});
     }
-    let score = |l: u8| json!({"type": "score", "score": l, "probabilities": {l.to_string(): 1.0}});
-    a["r2_data_model"] = score(r2);
-    a["r3_contract"] = score(r3);
-    a["r4_algorithmic"] = score(r4);
-    a["r6_verification"] = score(r6);
-    a["r5_app_wide"] = json!({"type": "noul", "noul": 0.2});
+    for n in 1..=40 {
+        let l = layers[(n - 1) % layers.len()];
+        a[pm_llm::rubric::file_question(n)] =
+            json!({"type": "choice", "choice": l, "probabilities": {l: 0.9}, "confidence": 0.9});
+    }
     json!({"model": "fake-1", "answers": a, "confidence_source": "none"})
 }
 
 /// A classifier that logs each request and answers by ticket; fails while `fail` exists.
 fn fake_classifier(dir: &Path) -> String {
-    std::fs::write(dir.join("small.json"), answers(1, 0, 1, 1, 1).to_string()).unwrap();
-    std::fs::write(dir.join("big.json"), answers(3, 2, 2, 2, 3).to_string()).unwrap();
+    let small = answers(&["r3_1", "r4_1", "r5_1", "r6_1"], &["ui", "service"]);
+    let big = answers(
+        &[
+            "r2_1", "r2_2", "r3_1", "r3_2", "r4_1", "r4_2", "r5_1", "r5_2", "r6_1", "r6_2", "r6_3",
+        ],
+        &["persistence"],
+    );
+    std::fs::write(dir.join("small.json"), small.to_string()).unwrap();
+    std::fs::write(dir.join("big.json"), big.to_string()).unwrap();
     let script = dir.join("classify.sh");
     std::fs::write(
         &script,
@@ -150,25 +157,26 @@ classifier = "fake"
     assert_eq!(calls(&bin), 6);
     let p = &c.project;
     let v = p.velocity.as_ref().expect("measured");
-    assert_eq!(v.rubric, "six-axis@2");
+    assert_eq!(v.rubric, "six-axis@3");
     assert!(!p.meta.not_measured.contains(&"velocity".to_string()));
     let ids: Vec<&str> = v.packages.iter().map(|p| p.id.as_str()).collect();
     // Newest first; Bob's untracked week is pseudonymized (Bob Builder = p1, Jane Doe = p2).
     assert_eq!(ids, ["SHOP-2", "p1~2025-W07", "SHOP-1", "VLT-1"]);
     let pkg = |id: &str| v.packages.iter().find(|p| p.id == id).unwrap();
-    // SHOP-1: one layer → R1 0; src + tests are two modules → R5 2; sum 5 → S, 2 points.
-    assert_eq!(pkg("SHOP-1").axes, Some([0, 0, 1, 1, 2, 1]));
+    // SHOP-1: the test file is not asked, so one layer → R1 0; sum 4 → S, 2 points.
+    assert_eq!(pkg("SHOP-1").axes, Some([0, 0, 1, 1, 1, 1]));
     assert_eq!(pkg("SHOP-1").points, Some(2));
     assert!(pkg("SHOP-1").tests);
     assert_eq!(pkg("SHOP-1").commits, 2);
     assert_eq!(pkg("SHOP-1").date, d("2025-02-05"));
-    // Two files in one module → R5 1; sum 4 → 2 points. The bot's commit is not in any package.
-    assert_eq!(pkg("p1~2025-W07").axes, Some([0, 0, 1, 1, 1, 1]));
+    // Two files asked, two layers → R1 1; sum 5 → 2 points. The bot's commit is in no package.
+    assert_eq!(pkg("p1~2025-W07").axes, Some([1, 0, 1, 1, 1, 1]));
     assert_eq!(pkg("p1~2025-W07").commits, 2);
     assert_eq!(pkg("p1~2025-W07").description, "fix typo");
-    // SHOP-2: three layers → 2; the migration is not counted as a file → R5 0; 11 → L, 5 points,
-    // all verification debt (R6 3, no test).
-    assert_eq!(pkg("SHOP-2").axes, Some([2, 2, 2, 2, 0, 3]));
+    // SHOP-2: the migration is not sent, so one file, one layer → R1 0; 11 → L, 5 points, all
+    // verification debt (R6 3, no test).
+    assert_eq!(pkg("SHOP-2").axes, Some([0, 2, 2, 2, 2, 3]));
+    assert_eq!(pkg("SHOP-2").unknown_files, 0);
     assert_eq!(
         (pkg("SHOP-2").size.as_deref(), pkg("SHOP-2").points),
         (Some("L"), Some(5))
@@ -210,7 +218,18 @@ classifier = "fake"
     let diff = state["diff"].as_str().unwrap();
     assert!(diff.contains("+export pub const R0 = 0;"));
     assert!(!diff.contains("CREATE TABLE"));
-    assert!(shop2["questions"]["r2_data_model"]["criteria"].is_array());
+    // `@3`: the anchors, then one layer choice per asked file.
+    let q = shop2["questions"].as_object().unwrap();
+    assert_eq!(q.len(), 16);
+    assert_eq!(q["r2_1"]["type"], "noul");
+    assert_eq!(q["file_1"]["type"], "choice");
+    assert!(
+        q["file_1"]["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("`api/src/orders/rule.ts`")
+    );
+    assert!(q["file_1"]["criteria"]["persistence"].is_string());
     assert!(shop2["context"].as_str().unwrap().contains("work package"));
     for s in &sent {
         let text = s["state"].as_str().unwrap();
