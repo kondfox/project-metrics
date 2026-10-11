@@ -450,6 +450,8 @@ mod ts_export {
         super::ProjectFile::export_all(&cfg).unwrap();
         super::LeadsFile::export_all(&cfg).unwrap();
         crate::Metrics::export_all(&cfg).unwrap();
+        crate::fleet::FleetFile::export_all(&cfg).unwrap();
+        crate::fleet::Pooled::export_all(&cfg).unwrap();
     }
 }
 

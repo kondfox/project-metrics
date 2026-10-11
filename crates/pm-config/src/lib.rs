@@ -1,6 +1,7 @@
 //! The project definition, `pmx.toml` (metrics spec §10.1, plan §3.3).
 
 pub mod edit;
+pub mod fleet;
 pub mod identity;
 pub mod import;
 

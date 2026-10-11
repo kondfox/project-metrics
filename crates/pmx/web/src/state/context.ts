@@ -1,21 +1,14 @@
 import { createContext } from "react";
 import type { MetricsEngine } from "../data/engine";
 import type { LeadsFile, ProjectFile } from "../data/types";
-import type { Cadence, DateRange } from "../lib/dates";
-import type { PresetId, RangeContext } from "../lib/ranges";
+import type { ViewState } from "./view";
 
-export interface DashboardState {
+export interface DashboardState extends ViewState {
   project: ProjectFile;
   leads: LeadsFile | null;
   engine: MetricsEngine | null;
-  rangeContext: RangeContext;
-  cadence: Cadence;
-  preset: PresetId;
-  /** The range the tiles summarize. */
-  range: DateRange;
-  setCadence(c: Cadence): void;
-  setPreset(p: PresetId): void;
-  setRange(r: DateRange): void;
+  /** Set when this dashboard is a project of a fleet page (its key there). */
+  fleetKey: string | null;
 }
 
 export const DashboardContext = createContext<DashboardState | null>(null);

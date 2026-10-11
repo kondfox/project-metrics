@@ -7,8 +7,10 @@ complexity, dependency vulnerabilities, secrets, SAST, hotspots, the Security sc
 prototype (M3), and the PR flow from GitHub and GitLab (peer review, cycle time, review wait, PR size,
 mentoring) reproduces it too (M4). M5 (LLM classifier, Velocity) is **built** (2026-10-11): every
 provider, the confidence gate, `classifier eval`, Velocity end to end; its exit criterion (a remote and
-a local classifier passing the eval against the private reference set) is still to run, see §8. Drafted 2026-10-08, revised
-2026-10-09 with owner decisions.
+a local classifier passing the eval against the private reference set) is still to run, see §8. M6 (local
+fleet) is **built** (2026-10-11): `fleet.toml`, pooling, `pmx fleet serve|export`, the fleet page with
+drill-down; its exit criterion (the fleet of the three pilot projects) is still to run, see §8. Drafted
+2026-10-08, revised 2026-10-09 with owner decisions.
 **What** to measure is defined by [metrics-spec.md](metrics-spec.md) (source of truth). This page covers
 **how** to build the tool, which runs anywhere and shows its results in a web dashboard. Where this page
 changes the spec, it says so with **⟂ spec change**. The spec must be updated to match before M1.
@@ -55,6 +57,9 @@ in the browser. A second command combines several projects into the **fleet view
 | D30 | **API providers** (M5): `jev` passes Jev's request through (`POST /v1/systemone`, Bearer key from `TYPESAFE_API_KEY`, `confidence_source = "model"`). `anthropic` calls the Messages API over raw HTTP (Rust has no official SDK) with `output_config.format` = the generated schema minus numeric bounds (the API rejects `minimum`/`maximum`), an optional `effort`, and `fallbacks: "default"` on models that take it, so a declined request runs on another model server-side; the answering model is recorded and `collect` warns when more than one answered. `openai-compatible` uses `response_format` json_schema (strict), temperature 0 unless sampling, `effort` as `reasoning_effort` (`none` turns a thinking model's reasoning off), and asks for logprobs: the top alternatives at the **last** occurrence of each level digit become that question's probabilities (`confidence_source = "logprobs"`; a thinking model's logprobs start with its reasoning); a server that rejects logprobs is asked again without. `samples = k` (frequencies as probabilities) and `isolate_questions` wrap any generative provider. Retries: 429, 529, 5xx and dropped connections with backoff | 2026-10-11 |
 | D31 | **Confidence gate in `collect`** (plan §6.4): only providers with a real confidence (Jev, logprobs, sampled) are gated. Below `confidence_gate`: re-ask once with every Score question's levels listed top-down, mapped back; still below: the `fallback` classifier if the package's data policy allows it (`escalated`), else the surer answer is kept (`low_confidence`). The gate and fallback are part of the answer cache key. `velocity.health` counts packages, unscored, escalated and low-confidence; the dashboard shows them | 2026-10-11 |
 | D32 | **`pmx classifier eval`** (plan §6.5): the reference set is ids and scores only (`project,id,R1..R6`, CSV or JSON); pmx rebuilds each package from the workspace's repos as `collect` does, so the candidate sees exactly what it would in production. Reports quadratic-weighted κ per axis, points, Velocity drift, test–retest (a second run that never reads the cache), unsure and escalated answers, and ids not found. **Pass:** ≥ 20 packages, κ ≥ 0.6 on every axis, drift within ±10%, test–retest ≥ 80% same points. Terminal only | 2026-10-11 |
+| D33 | **Fleet page = the dashboard app with a drill-down** (owner decision, M6): the same React bundle renders the fleet when its data is a fleet. `fleet.html` carries `fleet.json` and every project's `project.json` (never `leads.json`), so it stays one self-contained, shareable file (D17); a project row opens that project's dashboard in the same page (`#p=<key>&monthly&…`, cadence and range kept both ways). One WASM instance holds every project by key and pools any range (`fleet` op); a node check proves it reproduces every bucket of `fleet.json` | 2026-10-11 |
+| D34 | **Fleet row pooling** (owner decision, M6; `pm-metrics` `fleet`): flow ratios pool Σ numerators ÷ Σ denominators over every project; people stay per project (pseudonymous ids can't be matched across projects, so one person in two projects counts twice). AI-assisted pools only projects that attribute AI; peer review only projects with PR data; duplication joins the fleet's Quality only when every project measured it. Security shows the **worst** project (a gate, [quality-index.md](quality-index.md) §2). Velocity pools Σ points ÷ Σ FTE-days only when every scored project has the same rubric and classifiers and the same denominator (all FTE or all engineer-days), else "not comparable". Each pooled value records which projects fed it (shown as "2/3"); the table also counts projects per band, since a fleet scalar can hide one project falling | 2026-10-11 |
+| D35 | **Projects collected on different dates** (owner decision, M6): the fleet's as-of is the latest; an earlier project is marked "as of <date>" with a notice and a CLI warning, and its missing days count as missing, not zero | 2026-10-11 |
 | D10 | The parity harness is a workspace crate (`pmx-parity`, not published) that reads the golden set from `PMX_GOLDEN_DIR` and prints to the terminal only. It runs twice: in the **prototype dialect** (the prototype's test rules and git reading) every M1 series must match exactly; in the spec dialect the intentional differences are reported | 2026-10-09 |
 
 ---
@@ -77,16 +82,16 @@ pmx fleet serve|export --manifest fleet.toml ──► fleet.json + fleet dashbo
 
 | Crate | Responsibility |
 |---|---|
-| `pm-config` | Load and validate `pmx.toml`; `[people]` identity, bots, externals (spec §1.3); FTE provider (spec §10.2); JSON-config importer |
+| `pm-config` | Load and validate `pmx.toml`; `[people]` identity, bots, externals (spec §1.3); FTE provider (spec §10.2); JSON-config importer; `fleet.toml` (§3.4) |
 | `pm-classify` | File class, test detection, stack role, technology (spec §1.4–1.5). Pure functions, table-driven tests |
 | `pm-git` | Streaming parsers for `git log --numstat` and the rework walk (`log -p -w`); snapshot trees via `git worktree`/`archive`; fetch |
 | `pm-snapshot` | Finds, runs and parses the external tools (pure parsers, tested on sample output); turns raw results into per-repo summaries (D21) |
 | `pm-codehost` | GitHub (GraphQL) and GitLab (REST) adapters behind `CodeHost::merged_prs()` (spec §10.4), an `Http` seam for fakes and replays, the `gh pr list` export reader (D25) |
 | `pm-llm` | The classifier: the shared schema (§6.1), providers, data-policy guard, cache, eval harness |
-| `pm-metrics` | Roll-ups, ratios, scores (Quality, Security, Velocity, multi-stack). No I/O. **Also compiled to WASM** for the dashboard |
+| `pm-metrics` | Roll-ups, ratios, scores (Quality, Security, Velocity, multi-stack); fleet pooling and `fleet.json` (D34). No I/O. **Also compiled to WASM** for the dashboard |
 | `pm-progress` | Work planning, ETA model, renderers (TTY / plain / JSON) (§5) |
 | `pmx` (lib + bin) | Collect pipeline, `.pmx/cache.sqlite`, outputs, export; CLI (`clap`); `serve` (a small std-only loopback server); `demo` (D20); the built dashboard embedded as one page (D17, D18) |
-| `pm-wasm` (cdylib, unpublished) | pm-metrics for the browser: custom-range metrics over `days` (D15) |
+| `pm-wasm` (cdylib, unpublished) | pm-metrics for the browser: custom-range metrics over `days` (D15), several projects by key and the pooled fleet row (D33) |
 | `pmx-parity` (bin, unpublished) | Parity harness against the private golden set (D10, [parity.md](parity.md)) |
 | `crates/pmx/web/` | React + TypeScript dashboard with ECharts (D18); loads the `pm-wasm` engine; types generated from `pm-metrics` (D19). Inside the `pmx` crate so the crate can be packaged |
 
@@ -209,6 +214,15 @@ projects = ["shop", "crm", "mobile-app"]        # workspace folders, relative to
 numerators and denominators across projects (never averaging ratios) and builds the fleet page. Every
 headline links to that project's dashboard. Remote publishing (shared git repo, bucket, or server) is
 deferred, so the manifest entries are paths for now. The entry type should be extensible to URLs later.
+
+As built (M6): `pmx fleet serve|export [--manifest fleet.toml]` (the manifest defaults to `fleet.toml` in
+the `-C` folder). `export` writes `out/fleet.json` (spec §10.8) and `out/fleet.html` next to the manifest;
+`serve` re-reads every `project.json` on reload. The page lists one row per project (Quality, Velocity,
+Security, multi-stack, AI-assisted, peer review, and active devs as context), the pooled fleet row (D34),
+the projects per band, and each headline over time with a line per project; each project's Velocity cell
+names the classifier that scored it. Rows link into the project dashboards (D33). Folder names are the
+project keys (`-2`, `-3` for repeats). `pmx demo <dir> --fleet` makes a fictional fleet of three
+projects that differ in what they measure (one without AI attribution, one without PR data).
 
 ### 3.5 Privacy split
 
@@ -467,7 +481,7 @@ derived from schema answers. The rubric version bump (`six-axis@2`) invalidates 
 | **M3** ✓ 2026-10-09 | `pm-snapshot`: scc, jscpd, osv-scanner, gitleaks, semgrep; Quality with duplication; Security score; SAST trend; `doctor`, `tools install` | Quality and Security reproduced for all three projects. **Done:** every snapshot series exact in the parity replay for all three projects, and in the live tool runs ([parity.md](parity.md) §6); dashboard Security and Code health sections; `tests/snapshots.rs` covers the stage with fake tools |
 | **M4** ✓ 2026-10-11 | `pm-codehost`: GitHub + GitLab; peer review, cycle time, review wait, mentoring (unified expert rule, spec §8) | Spec §8 complete. **Done:** every PR series exact against the recorded GitLab responses and the GitHub export for all three projects in the prototype dialect; in the spec dialect the only deltas are the months with PRs by bots or externals, and mentoring pairs (the unified rule) ([parity.md](parity.md) §6); `tests/pulls.rs` covers the stage against a fake GitLab (incremental fetch, fallback to stored PRs, not measured); dashboard Peer review section; `pmx demo` has PRs |
 | **M5** | `pm-llm`: schema types, `jev`, `openai-compatible`, `anthropic` and `command` providers, data-policy guard, confidence gate, cache, `classifier eval`; Velocity on `six-axis@2` | At least one remote and one local classifier pass the eval |
-| **M6** | Local fleet: `fleet.toml`, aggregation, fleet dashboard | Fleet rebuilt from the three local project folders |
+| **M6** | Local fleet: `fleet.toml`, aggregation, fleet dashboard | Fleet rebuilt from the three local project folders. **Built** 2026-10-11 (see "M6 progress"); the run on the three pilot projects is left |
 | **M7** | Packaging, `init` wizard polish, docs | 15-minute onboarding verified by someone new |
 
 **M5 progress (2026-10-11).** Built: the schema types, the `six-axis@2` question set and the scoring in
@@ -483,7 +497,17 @@ HTTP (`crates/pmx/tests/velocity.rs`, `crates/pmx/tests/classifier.rs`, `pm-llm`
 exit criterion:** `classifier eval` of one remote and one local classifier against the private reference
 set (needs `PMX_GOLDEN_DIR`'s reference as `project,id,R1..R6`, a local model server, and API keys for
 `jev`/`anthropic`, none of which are on this machine); the fleet marking of each project's classifier
-comes with M6.
+comes with M6 (done: the fleet page names each project's classifier, and pools Velocity only across
+projects scored the same way, D34).
+
+**M6 progress (2026-10-11).** Built: `fleet.toml` (`pm-config`), pooling and `fleet.json` (`pm-metrics`
+`fleet`, D34), the keyed WASM engine with its `fleet` op, `pmx fleet serve|export`, the fleet page and
+drill-down in the dashboard app (D33), stale-project handling (D35), `pmx demo --fleet`. Tested:
+`pm-metrics` unit tests for every pooling rule, `crates/pmx/tests/fleet.rs` (CLI export, exact pooling of
+two collected projects, missing project, serving, and the WASM engine against every bucket of
+`fleet.json`), dashboard tests (`src/fleet/FleetApp.test.tsx`). Checked on the fictional demo fleet in a
+browser. **Left for the exit criterion:** `pmx fleet export` over the three pilot workspaces (private; no
+`PMX_GOLDEN_DIR` on this machine), checked against their project dashboards.
 
 **Testing:**
 - **Synthetic fixture repos**, built by the tests themselves with scripted authors, dates and file trees

@@ -1,4 +1,4 @@
-import type { Metrics, ProjectFile } from "./types";
+import type { FleetFile, Metrics, Pooled, ProjectFile } from "./types";
 import { formatDate, type DateRange } from "../lib/dates";
 
 /**
@@ -38,19 +38,35 @@ export function bridge(ex: WasmExports): (request: unknown) => unknown {
   };
 }
 
-export function engineFrom(call: (request: unknown) => unknown, project: ProjectFile): MetricsEngine {
+/**
+ * Load `project` into the module under `key` (a project page uses ""). `velocityBasis` comes from
+ * `fleet.json`: the fleet pools Velocity only across projects with the same one.
+ */
+export function engineFrom(
+  call: (request: unknown) => unknown,
+  project: ProjectFile,
+  key = "",
+  velocityBasis: string | null = null,
+): MetricsEngine {
   call({
     op: "load",
+    key,
     days: project.days,
     snapshots: project.snapshots,
     breadth_roles: project.project.breadth_roles,
     ai_attribution: project.project.ai_attribution,
     pull_requests: project.meta.pull_requests,
     velocity: project.velocity?.options ?? null,
+    velocity_basis: velocityBasis,
   });
   return {
-    range: (r) => call({ op: "range", start: formatDate(r.start), end: formatDate(r.end) }) as Metrics,
+    range: (r) => call({ op: "range", key, start: formatDate(r.start), end: formatDate(r.end) }) as Metrics,
   };
+}
+
+async function instantiate(wasm: Uint8Array): Promise<(request: unknown) => unknown> {
+  const { instance } = await WebAssembly.instantiate(wasm as BufferSource, {});
+  return bridge(instance.exports as unknown as WasmExports);
 }
 
 /** `null` when the module is absent (pmx built without the wasm32 target). */
@@ -59,6 +75,34 @@ export async function loadEngine(
   project: ProjectFile,
 ): Promise<MetricsEngine | null> {
   if (!wasm || wasm.length === 0) return null;
-  const { instance } = await WebAssembly.instantiate(wasm as BufferSource, {});
-  return engineFrom(bridge(instance.exports as unknown as WasmExports), project);
+  return engineFrom(await instantiate(wasm), project);
+}
+
+/** Every project of a fleet in one module, plus the pooled fleet row. */
+export interface FleetEngine {
+  projects: Record<string, MetricsEngine>;
+  pool(range: DateRange): Pooled;
+}
+
+export function fleetEngineFrom(
+  call: (request: unknown) => unknown,
+  fleet: FleetFile,
+  projects: Record<string, ProjectFile>,
+): FleetEngine {
+  const keys = fleet.projects.map((p) => p.key);
+  return {
+    projects: Object.fromEntries(
+      fleet.projects.map((p) => [p.key, engineFrom(call, projects[p.key]!, p.key, p.velocity_basis)]),
+    ),
+    pool: (r) => call({ op: "fleet", keys, start: formatDate(r.start), end: formatDate(r.end) }) as Pooled,
+  };
+}
+
+export async function loadFleetEngine(
+  wasm: Uint8Array | null,
+  fleet: FleetFile,
+  projects: Record<string, ProjectFile>,
+): Promise<FleetEngine | null> {
+  if (!wasm || wasm.length === 0) return null;
+  return fleetEngineFrom(await instantiate(wasm), fleet, projects);
 }

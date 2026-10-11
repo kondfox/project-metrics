@@ -282,13 +282,58 @@ fn month_add(d: NaiveDate, months: i32) -> NaiveDate {
 }
 
 /// Write the demo repos and `pmx.toml` into `dir` (which must be empty or missing).
+/// Which fictional project to make. The fleet demo makes three that differ in what they measure.
+#[derive(Clone, Copy, Debug)]
+pub struct Variant {
+    /// The workspace folder in a fleet demo.
+    pub folder: &'static str,
+    pub name: &'static str,
+    /// Mixed into the generator's seed (0 = the single-project demo).
+    pub seed: u64,
+    /// `false`: AI trailers are stripped by policy (spec §6), so AI-assisted is not tracked.
+    pub ai_attribution: bool,
+    /// `false`: no code host, so peer review is not measured.
+    pub pull_requests: bool,
+}
+
+pub const SHOP: Variant = Variant {
+    folder: "shop",
+    name: "Acme Shop (demo)",
+    seed: 0,
+    ai_attribution: true,
+    pull_requests: true,
+};
+
+/// The fleet demo's projects.
+pub const FLEET: [Variant; 3] = [
+    SHOP,
+    Variant {
+        folder: "crm",
+        name: "Acme CRM (demo)",
+        seed: 1,
+        ai_attribution: false,
+        pull_requests: true,
+    },
+    Variant {
+        folder: "mobile",
+        name: "Acme Mobile (demo)",
+        seed: 2,
+        ai_attribution: true,
+        pull_requests: false,
+    },
+];
+
 pub fn generate(dir: &Path, as_of: NaiveDate) -> Result<Workspace> {
+    generate_variant(dir, as_of, &SHOP)
+}
+
+pub fn generate_variant(dir: &Path, as_of: NaiveDate, v: &Variant) -> Result<Workspace> {
     if dir.exists() && std::fs::read_dir(dir)?.next().is_some() {
         bail!("{} is not empty", dir.display());
     }
     let range_start = month_add(as_of, -13);
     let history_start = month_add(range_start, -2);
-    let mut rng = Rng(as_of.num_days_from_ce() as u64);
+    let mut rng = Rng(as_of.num_days_from_ce() as u64 ^ v.seed);
     let mut repos: Vec<RepoState> = REPOS.iter().map(|_| RepoState::default()).collect();
     let total_days = (as_of - history_start).num_days().max(1) as f64;
 
@@ -543,10 +588,10 @@ pub fn generate(dir: &Path, as_of: NaiveDate) -> Result<Workspace> {
     people.externals = vec![EXTERNAL.0.into()];
     let config = Config {
         project: Project {
-            name: "Acme Shop (demo)".into(),
+            name: v.name.into(),
             range_start,
             breadth_roles: vec![Role::Frontend, Role::Backend, Role::Mobile, Role::Qa],
-            ai_attribution: true,
+            ai_attribution: v.ai_attribution,
         },
         repos: REPOS
             .iter()
@@ -554,14 +599,16 @@ pub fn generate(dir: &Path, as_of: NaiveDate) -> Result<Workspace> {
                 path: Some(format!("repos/{}", s.name)),
                 branch: Some("main".into()),
                 role: RepoRole::Fixed(s.role),
-                code_host_id: Some(pm_config::CodeHostId::Name(format!("{ORG}/{}", s.name))),
+                code_host_id: v
+                    .pull_requests
+                    .then(|| pm_config::CodeHostId::Name(format!("{ORG}/{}", s.name))),
                 ..Default::default()
             })
             .collect(),
         role_rules: None,
         // There is no such organization: `pmx demo` passes its PRs in, and a later
         // `pmx collect` without the token keeps using the stored ones.
-        code_host: Some(pm_config::CodeHost {
+        code_host: v.pull_requests.then_some(pm_config::CodeHost {
             kind: pm_config::CodeHostKind::Github,
             base: None,
             group: None,
@@ -601,8 +648,16 @@ fn account(login: &str) -> Account {
 /// improves over the year, Eli (who joins later) gets mentored by the frontend experts, and a
 /// contractor's and a bot's PRs show the exclusions.
 pub fn pull_requests(as_of: NaiveDate) -> BTreeMap<String, Vec<MergedPr>> {
+    pull_requests_variant(as_of, &SHOP)
+}
+
+/// The PRs of a variant; empty when it has no code host.
+pub fn pull_requests_variant(as_of: NaiveDate, v: &Variant) -> BTreeMap<String, Vec<MergedPr>> {
+    if !v.pull_requests {
+        return BTreeMap::new();
+    }
     let range_start = month_add(as_of, -13);
-    let mut rng = Rng(as_of.num_days_from_ce() as u64 ^ 0x5eed);
+    let mut rng = Rng(as_of.num_days_from_ce() as u64 ^ 0x5eed ^ v.seed);
     let total_days = (as_of - range_start).num_days().max(1) as f64;
     let at = |day: NaiveDate, minutes: u64| {
         let t = day.and_hms_opt(8, 0, 0).expect("valid time").and_utc() + chrono::Duration::minutes(minutes as i64);

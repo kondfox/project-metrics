@@ -1,6 +1,6 @@
 import { formatDate, isValidDate, parseDate } from "../../lib/dates";
 import { PRESETS, type PresetId } from "../../lib/ranges";
-import { useDashboard } from "../../state/hooks";
+import { useView } from "../../state/view";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import styles from "./layout.module.css";
 
@@ -10,8 +10,8 @@ const CADENCES = [
 ] as const;
 
 /** Cadence and time range. Presets and dates set the range the tiles summarize. */
-export function Controls() {
-  const { cadence, setCadence, preset, setPreset, range, setRange, rangeContext, engine } = useDashboard();
+export function Controls(props: { subject?: string }) {
+  const { cadence, setCadence, preset, setPreset, range, setRange, rangeContext, hasEngine } = useView();
   const min = formatDate(rangeContext.start);
   const max = formatDate(rangeContext.asOf);
   const onDate = (which: "start" | "end", value: string) => {
@@ -25,7 +25,7 @@ export function Controls() {
       <SegmentedControl label="Cadence" options={CADENCES} value={cadence} onChange={setCadence} />
       <select aria-label="Range" value={preset} onChange={(e) => setPreset(e.target.value as PresetId)}>
         {PRESETS.map((p) => (
-          <option key={p.id} value={p.id} disabled={p.id === "custom" && !engine}>
+          <option key={p.id} value={p.id} disabled={p.id === "custom" && !hasEngine}>
             {p.label}
           </option>
         ))}
@@ -36,7 +36,7 @@ export function Controls() {
         value={formatDate(range.start)}
         min={min}
         max={max}
-        disabled={!engine}
+        disabled={!hasEngine}
         onChange={(e) => onDate("start", e.target.value)}
       />
       <input
@@ -45,11 +45,11 @@ export function Controls() {
         value={formatDate(range.end)}
         min={min}
         max={max}
-        disabled={!engine}
+        disabled={!hasEngine}
         onChange={(e) => onDate("end", e.target.value)}
       />
       <span className={styles.legend}>
-        tiles: {formatDate(range.start)} – {formatDate(range.end)} · charts:{" "}
+        {props.subject ?? "tiles"}: {formatDate(range.start)} – {formatDate(range.end)} · charts:{" "}
         {cadence === "week" ? "weeks" : "months"} up to the range end · * in progress · hollow = low n
       </span>
     </div>

@@ -39,3 +39,12 @@
   font-family: var(--mono);
   font-size: 11px;
 }
+.back {
+  flex-basis: 100%;
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 13px;
+}
+.back:hover {
+  text-decoration: underline;
+}

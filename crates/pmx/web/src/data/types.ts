@@ -19,3 +19,7 @@ export type { ProjectFile } from "../generated/ProjectFile";
 export type { ProjectInfo } from "../generated/ProjectInfo";
 export type { RepoInfo } from "../generated/RepoInfo";
 export type { Role } from "../generated/Role";
+export type { Coverage } from "../generated/Coverage";
+export type { FleetFile } from "../generated/FleetFile";
+export type { FleetProject } from "../generated/FleetProject";
+export type { Pooled } from "../generated/Pooled";

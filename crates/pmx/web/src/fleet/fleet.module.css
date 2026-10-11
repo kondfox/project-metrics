@@ -1,0 +1,30 @@
+.table td,
+.table th {
+  white-space: nowrap;
+}
+.fleetRow td {
+  border-top: 2px solid var(--line);
+  font-weight: 600;
+}
+.muted {
+  color: var(--muted);
+  font-weight: 400;
+}
+.small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  margin-left: 4px;
+}
+.project:hover {
+  text-decoration: underline;
+}
+.project {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+.bands {
+  color: var(--muted);
+  font-size: 12px;
+}

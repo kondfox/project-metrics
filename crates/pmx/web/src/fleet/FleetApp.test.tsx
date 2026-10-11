@@ -1,0 +1,60 @@
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { fixtureFleet } from "../test/fixtures";
+import { FleetRoot } from "./FleetRoot";
+
+// ECharts needs a real layout engine; the chart options are tested on their own.
+vi.mock("../components/charts/EChart", () => ({ EChart: () => <div data-testid="chart" /> }));
+
+function renderFleet() {
+  const { fleet, projects } = fixtureFleet();
+  return render(<FleetRoot data={{ kind: "fleet", fleet, projects, wasm: null }} engine={null} />);
+}
+
+const row = (name: string) => screen.getByRole("row", { name: new RegExp(`^${name}`) });
+
+beforeEach(() => window.history.replaceState(null, "", "/"));
+
+describe("<FleetRoot>", () => {
+  it("shows a row per project and the pooled fleet row", () => {
+    renderFleet();
+    expect(screen.getByRole("heading", { name: "Acme Engineering" })).toBeInTheDocument();
+    const shop = row("Acme Shop");
+    expect(shop).toHaveTextContent("82");
+    expect(within(shop).getByLabelText("band B")).toBeInTheDocument();
+    expect(shop).toHaveTextContent("~40");
+    const crm = row("Acme CRM");
+    expect(crm).toHaveTextContent("49");
+    expect(crm).toHaveTextContent("as of 2026-09-29");
+    expect(within(crm).getAllByText("not measured")).toHaveLength(4); // velocity, security, AI, PRs
+    const fleet = row("Fleet");
+    expect(fleet).toHaveTextContent("63");
+    expect(fleet).toHaveTextContent("1/2"); // AI, peer review and security from one project
+    expect(screen.getByText(/Projects by band/)).toHaveTextContent("Quality: 1×B 1×D");
+    expect(screen.getByText(/Collected before 2026-09-30/)).toHaveTextContent("Acme CRM");
+  });
+
+  it("opens a project's dashboard and comes back", async () => {
+    renderFleet();
+    await userEvent.click(screen.getByRole("link", { name: "Acme CRM" }));
+    expect(window.location.hash).toBe("#p=crm&weekly&2026-09-01..2026-09-30");
+    expect(await screen.findByRole("heading", { name: "Acme CRM" })).toBeInTheDocument();
+    expect(screen.getAllByRole("group", { name: "AI-assisted" })[0]).toHaveTextContent("not measured");
+    await userEvent.click(screen.getByRole("link", { name: "← Fleet" }));
+    expect(await screen.findByRole("table", { name: "Fleet" })).toBeInTheDocument();
+    expect(window.location.hash).toBe("#weekly&2026-09-01..2026-09-30");
+  });
+
+  it("keeps the preset when a link carries its range", () => {
+    window.history.replaceState(null, "", "#p=shop&monthly&2026-09-01..2026-09-30");
+    renderFleet();
+    expect(screen.getByRole("heading", { name: "Acme Shop" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Range" })).toHaveValue("month");
+  });
+
+  it("ignores an unknown project", () => {
+    window.history.replaceState(null, "", "#p=nope");
+    renderFleet();
+    expect(screen.getByRole("table", { name: "Fleet" })).toBeInTheDocument();
+  });
+});

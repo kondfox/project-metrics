@@ -7,6 +7,7 @@ pub mod dashboard;
 pub mod demo;
 pub mod eval;
 pub mod export;
+pub mod fleet;
 pub mod ingest;
 pub mod people;
 pub mod pulls;

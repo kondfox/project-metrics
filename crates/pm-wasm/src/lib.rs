@@ -10,6 +10,9 @@
 //!   "pull_requests": meta.pull_requests, "velocity": velocity.options}` → `{"mix_roles": […]}`
 //! - `{"op": "range", "start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}` →
 //!   `Metrics` (`{values, n, stack_mix, leaders}`; TypeScript type in crates/pmx/web/src/generated)
+//! - The fleet page loads several projects: `load` and `range` then take a `"key"` (default `""`),
+//!   `load` also `"velocity_basis"`, and `{"op": "fleet", "keys": […], "start", "end"}` returns the
+//!   pooled fleet row (`Pooled`, pm-metrics `fleet`).
 //!
 //! Errors come back as `{"error": "…"}`.
 
@@ -19,27 +22,25 @@ use chrono::NaiveDate;
 use pm_classify::Role;
 use std::collections::BTreeMap;
 
+use pm_metrics::fleet::{Member, pool};
 use pm_metrics::model::{PullsInfo, mix_roles};
-use pm_metrics::snapshot::{SnapshotPoint, at_or_before};
+use pm_metrics::snapshot::SnapshotPoint;
 use pm_metrics::velocity::VelocityOptions;
-use pm_metrics::{Days, MetricOptions, aggregate, metrics};
+use pm_metrics::{Days, MetricOptions};
 use serde::Deserialize;
 use serde_json::json;
 
-struct State {
-    days: Days,
-    snapshots: BTreeMap<NaiveDate, SnapshotPoint>,
-    opts: MetricOptions,
-}
-
 thread_local! {
-    static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
+    /// Loaded projects by key (a project dashboard uses `""`).
+    static STATE: RefCell<BTreeMap<String, Member>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase")]
 enum Request {
     Load {
+        #[serde(default)]
+        key: String,
         days: Days,
         #[serde(default)]
         snapshots: BTreeMap<NaiveDate, SnapshotPoint>,
@@ -49,8 +50,17 @@ enum Request {
         pull_requests: Option<PullsInfo>,
         #[serde(default)]
         velocity: Option<VelocityOptions>,
+        #[serde(default)]
+        velocity_basis: Option<String>,
     },
     Range {
+        #[serde(default)]
+        key: String,
+        start: NaiveDate,
+        end: NaiveDate,
+    },
+    Fleet {
+        keys: Vec<String>,
         start: NaiveDate,
         end: NaiveDate,
     },
@@ -61,42 +71,43 @@ pub fn handle(request: &str) -> String {
     let resp = match serde_json::from_str::<Request>(request) {
         Err(e) => json!({ "error": format!("bad request: {e}") }),
         Ok(Request::Load {
+            key,
             days,
             snapshots,
             breadth_roles,
             ai_attribution,
             pull_requests,
             velocity,
+            velocity_basis,
         }) => {
             let roles = mix_roles(&days);
             let reply = json!({ "mix_roles": roles });
-            STATE.with(|s| {
-                *s.borrow_mut() = Some(State {
-                    opts: MetricOptions {
-                        breadth_roles,
-                        ai_attribution,
-                        mix_roles: roles,
-                        pull_requests: pull_requests.is_some(),
-                        pr_size: pull_requests.is_some_and(|p| p.sizes),
-                        velocity,
-                    },
-                    days,
-                    snapshots,
-                })
-            });
+            let member = Member {
+                key: key.clone(),
+                opts: MetricOptions {
+                    breadth_roles,
+                    ai_attribution,
+                    mix_roles: roles,
+                    pull_requests: pull_requests.is_some(),
+                    pr_size: pull_requests.is_some_and(|p| p.sizes),
+                    velocity,
+                },
+                days,
+                snapshots,
+                velocity_basis,
+            };
+            STATE.with(|s| s.borrow_mut().insert(key, member));
             reply
         }
-        Ok(Request::Range { start, end }) => STATE.with(|s| match &*s.borrow() {
+        Ok(Request::Range { key, start, end }) => STATE.with(|s| match s.borrow().get(&key) {
             None => json!({ "error": "load the project first" }),
-            Some(st) => {
-                let m = metrics(
-                    &aggregate(&st.days, start, end),
-                    &st.opts,
-                    at_or_before(&st.snapshots, end),
-                    start,
-                    end,
-                );
-                serde_json::to_value(&m).expect("metrics serialize")
+            Some(m) => serde_json::to_value(m.metrics(start, end)).expect("metrics serialize"),
+        }),
+        Ok(Request::Fleet { keys, start, end }) => STATE.with(|s| {
+            let s = s.borrow();
+            match keys.iter().map(|k| s.get(k).ok_or(k)).collect::<Result<Vec<_>, _>>() {
+                Err(k) => json!({ "error": format!("project `{k}` is not loaded") }),
+                Ok(members) => serde_json::to_value(pool(&members, start, end)).expect("pooled serialize"),
             }
         }),
     };
@@ -182,6 +193,26 @@ mod tests {
         assert_eq!(r["values"]["added"], json!(95.0));
         assert_eq!(r["n"]["commit_med"], json!(2));
         assert!(r["values"].get("velocity").is_none(), "not measured: left out");
+    }
+
+    #[test]
+    fn fleet_pools_keyed_projects() {
+        for key in ["a", "b"] {
+            call(
+                json!({"op": "load", "key": key, "days": days(), "breadth_roles": ["frontend", "backend"],
+                "ai_attribution": true}),
+            );
+        }
+        let a = call(json!({"op": "range", "key": "a", "start": "2025-01-01", "end": "2025-01-31"}));
+        assert_eq!(a["values"]["active_devs"], json!(1.0));
+        let f = call(json!({"op": "fleet", "keys": ["a", "b"], "start": "2025-01-01", "end": "2025-01-31"}));
+        assert_eq!(f["values"]["commits"], json!(4.0));
+        assert_eq!(f["values"]["active_devs"], json!(2.0), "p1 of a and p1 of b");
+        assert_eq!(f["fed"]["quality"], json!(["a", "b"]));
+        let missing = handle(
+            &json!({"op": "fleet", "keys": ["a", "zz"], "start": "2025-01-01", "end": "2025-01-31"}).to_string(),
+        );
+        assert!(missing.contains("`zz` is not loaded"));
     }
 
     #[test]

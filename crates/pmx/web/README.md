@@ -1,8 +1,10 @@
 # pmx dashboard
 
-The project dashboard: React 19 + TypeScript, built by Vite into **one self-contained HTML file** that
-`pmx` embeds (`pmx serve`, `pmx export --format html`). The page gets its data from pmx, never from a
-server: `project.json`, the optional private `leads.json`, and the metrics engine (WASM).
+The project dashboard and the fleet page: React 19 + TypeScript, built by Vite into **one self-contained
+HTML file** that `pmx` embeds (`pmx serve`, `pmx export --format html`, `pmx fleet serve|export`). The
+page gets its data from pmx, never from a server: `project.json`, the optional private `leads.json`, and
+the metrics engine (WASM); or, for a fleet, `fleet.json` with every project's `project.json`, where a
+project row opens that project's dashboard in the same page (`#p=<key>&…`).
 
 ## Work on it
 
@@ -10,6 +12,7 @@ server: `project.json`, the optional private `leads.json`, and the metrics engin
 npm ci
 npm run dev-data   # fictional demo data in dev-data/ (runs `pmx demo`; needs cargo)
 npm run dev        # http://localhost:5173, hot reload
+npm run dev-data -- --fleet   # a fictional fleet of three; open http://localhost:5173/?fleet
 npm run check      # typecheck, lint, format check, unit tests (what CI runs)
 ```
 
@@ -35,13 +38,14 @@ placeholder page instead. CI sets `PMX_REQUIRE_WEB=1` so that can't happen silen
 | `src/data/`               | Loading the injected data (`boot.ts`), the WASM bridge (`engine.ts`), bucket helpers (`project.ts`) |
 | `src/lib/`                | Pure helpers: dates and ISO weeks, formatting, range presets, URL hash state                        |
 | `src/metrics/registry.ts` | How each metric id is presented: label, unit, description, what `n` counts                          |
-| `src/state/`              | `DashboardProvider` (project, engine, cadence, range) and the hooks components use                  |
+| `src/state/`              | `DashboardProvider` (project, engine), the shared view state (`view.ts`: cadence, range), hooks     |
 | `src/components/ui/`      | Primitives: `Badge`, `BandBadge`, `Banner`, `Section`, `SegmentedControl`, `ErrorBoundary`          |
 | `src/components/tiles/`   | `Tile` (the three states, low n), `MetricTile`, `QualityTile`, `NotMeasuredTile`, `TileGrid`        |
 | `src/components/charts/`  | `EChart` (lifecycle), `buildTimeSeriesOption` (pure, tested), `TimeSeriesChart`, `ChartGrid`        |
 | `src/components/tables/`  | Generic typed `DataTable`, `AiCompareTable`, `LeadersTable`                                         |
 | `src/components/layout/`  | `Header`, `Controls`, `Notices`, `Footer`                                                           |
 | `src/sections/`           | One file per dashboard area, composed from the components above                                     |
+| `src/fleet/`              | The fleet page: `FleetRoot` (fleet or a project's dashboard, from the hash), table, trends          |
 | `src/styles/theme.css`    | Design tokens (light and dark); components and charts use only these                                |
 
 ## Adding things

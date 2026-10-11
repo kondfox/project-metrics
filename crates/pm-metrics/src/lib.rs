@@ -1,6 +1,7 @@
 //! Roll-ups, ratios and scores (metrics spec §1–§8). No I/O.
 
 pub mod day;
+pub mod fleet;
 pub mod metrics;
 pub mod model;
 pub mod period;
@@ -10,6 +11,7 @@ pub mod stats;
 pub mod velocity;
 
 pub use day::{Day, Days, Group, aggregate, merge_days};
+pub use fleet::{FleetFile, Member, Pooled, build_fleet, pool};
 pub use metrics::{AiCompare, Leader, MetricOptions, Metrics, MultiStack, metrics, multistack};
 pub use model::{BuildInput, LeadsFile, ProjectFile, build};
 pub use period::Bucket;

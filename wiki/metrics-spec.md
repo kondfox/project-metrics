@@ -517,7 +517,7 @@ points) go to a separate `private/leads.json`, never into the shared file. The p
 in `days` (commits and lines per person, needed for multi-stack, active devs and commits per dev over any
 range) use **pseudonymous ids** (`p1`, `p2`, … by sorted name); the id → name map is only in
 `private/leads.json` (decided 2026-10-09, plan D9). The dashboard recomputes custom ranges from `days` with the same Rust code compiled to WASM (plan D15). The fleet view is an
-aggregate of these per-project files.
+aggregate of these per-project files (§10.8).
 
 ### 10.7 Metric ids (series and long format)
 The keys of `series_weekly` / `series_monthly` and the `metric` column of `pmx export --format long`
@@ -553,3 +553,25 @@ Values are unrounded; `null` means no data.
 | `velocity_points`, `verification_debt_pts` | §4 | work packages |
 | `velocity_packages` | §4: packages dated in the range, scored or not | — |
 | `points_per_commit`, `points_per_kloc` | §4, over the packages' commits and added source lines | commits · added lines |
+
+### 10.8 Fleet (`fleet.json`, decided 2026-10-11, plan D33–D35)
+A local fleet combines project workspaces listed in `fleet.toml` (`name`, `projects = [folders]`), reading
+each `out/project.json`, never `out/private/`. Every project keeps its own metrics; the **fleet row** pools:
+- **Flow ratios** (Quality and its constituents, multi-stack, commits, active devs): Σ numerators ÷ Σ
+  denominators over all projects, each project's people under its own `breadth_roles`. Pseudonymous ids
+  are per project, so one person in two projects counts twice.
+- **AI-assisted:** only projects with `ai_attribution`. **Peer review:** only projects with PR data.
+- **Duplication** (and so a 4-constituent fleet Quality): only when every project has a snapshot with it
+  at the range end; pooled by scanned lines.
+- **Security:** the worst project's score at the range end (a gate: never pooled or averaged).
+- **Velocity:** Σ points ÷ Σ FTE-days (or Σ engineer-days, `velocity_approx` = 1) only when every scored
+  project has the same rubric and classifiers and the same kind of denominator; otherwise `null` with a
+  note. The §4 rules hold per project (a range before `since` or with an unscored package is `null`).
+- A pooled value lists the projects that fed it (`coverage{fed, notes}`); fewer than all is shown.
+
+`fleet.json`: `name`, `as_of` (latest of the projects), `range_start` (earliest), `partial_week`,
+`partial_month`, `headline_month`, `projects[{key, name, as_of, stale, velocity_basis}]` (`stale`: collected
+before the fleet's `as_of`; its later days are missing, not zero), `weeks`, `months`, `series_*` / `n_*`
+of the fleet row (ids of §10.7), and `coverage_weekly` / `coverage_monthly`. Bands and low-n use the same
+fixed rules as projects (§1.7, §1.1); nothing is fleet-relative.
+

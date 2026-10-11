@@ -47,7 +47,7 @@ fn base64(bytes: &[u8]) -> String {
 }
 
 /// JSON is safe inside `<script>` once `</` can't end the element early.
-fn script_safe(json: &str) -> String {
+pub(crate) fn script_safe(json: &str) -> String {
     json.replace("</", "<\\/").replace("<!--", "<\\!--")
 }
 
@@ -67,7 +67,12 @@ pub fn render(project_json: &str, leads_json: Option<&str>) -> Result<String> {
         leads_json.map(script_safe).unwrap_or_else(|| "null".into()),
         base64(WASM)
     );
-    let title = format!("<title>{}</title>", html_escape(&format!("{} · pmx", p.project.name)));
+    inject(&data, &format!("{} · pmx", p.project.name))
+}
+
+/// Put `data` (the JSON object the app reads, already script-safe) into the page.
+pub(crate) fn inject(data: &str, title: &str) -> Result<String> {
+    let title = format!("<title>{}</title>", html_escape(title));
     let at = PAGE.find(DATA_OPEN).context("the dashboard page has no data element")? + DATA_OPEN.len();
     let (head, tail) = PAGE.split_at(at);
     let close = tail.find("</script>").context("unterminated data element")?;
@@ -76,6 +81,11 @@ pub fn render(project_json: &str, leads_json: Option<&str>) -> Result<String> {
         head.replacen("<title>pmx</title>", &title, 1),
         &tail[close..]
     ))
+}
+
+/// The engine as the base64 string the page decodes.
+pub(crate) fn engine_base64() -> String {
+    base64(WASM)
 }
 
 /// Render from a workspace's `out/` folder.
@@ -100,7 +110,7 @@ fn respond(stream: &mut TcpStream, status: &str, kind: &str, body: &[u8]) -> std
     stream.write_all(body)
 }
 
-fn handle(mut stream: TcpStream, out_dir: &Path) -> std::io::Result<()> {
+fn handle(mut stream: TcpStream, page: &dyn Fn() -> Result<String>) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut request = String::new();
     reader.read_line(&mut request)?;
@@ -112,7 +122,7 @@ fn handle(mut stream: TcpStream, out_dir: &Path) -> std::io::Result<()> {
     }
     let path = request.split_whitespace().nth(1).unwrap_or("/");
     match path.split('?').next().unwrap_or("/") {
-        "/" | "/index.html" => match render_workspace(out_dir, true) {
+        "/" | "/index.html" => match page() {
             Ok(html) => respond(&mut stream, "200 OK", "text/html; charset=utf-8", html.as_bytes()),
             Err(e) => respond(
                 &mut stream,
@@ -129,10 +139,15 @@ fn handle(mut stream: TcpStream, out_dir: &Path) -> std::io::Result<()> {
 /// `out/`, so a new `pmx collect` shows up on reload. The private lead view is included: the
 /// listener only accepts local connections.
 pub fn serve(listener: TcpListener, out_dir: &Path) -> Result<()> {
+    serve_page(listener, &|| render_workspace(out_dir, true))
+}
+
+/// Serve whatever `page` renders at `/`, rendering it again for every request.
+pub fn serve_page(listener: TcpListener, page: &dyn Fn() -> Result<String>) -> Result<()> {
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {
-                if let Err(e) = handle(s, out_dir) {
+                if let Err(e) = handle(s, page) {
                     eprintln!("request failed: {e}");
                 }
             }

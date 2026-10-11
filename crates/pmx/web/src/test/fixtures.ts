@@ -1,4 +1,4 @@
-import type { LeadsFile, ProjectFile } from "../data/types";
+import type { FleetFile, LeadsFile, ProjectFile } from "../data/types";
 
 /** A tiny fictional project: two months, nine weeks, one in progress. */
 export function fixtureProject(over: Partial<ProjectFile["project"]> = {}): ProjectFile {
@@ -208,4 +208,53 @@ export function fixtureWithVelocity(): ProjectFile {
     ],
   };
   return p;
+}
+
+/**
+ * A two-project fleet: Acme Shop (security and PRs measured) and Acme CRM (AI trailers stripped,
+ * collected a day early). The pooled row is what pmx would write.
+ */
+export function fixtureFleet(): { fleet: FleetFile; projects: Record<string, ProjectFile> } {
+  const shop = fixtureWithPulls();
+  Object.assign(shop.series_monthly, { security_score: [52.1, 40] });
+  shop.meta.not_measured = shop.meta.not_measured.filter((x) => x !== "dependency_vulnerabilities");
+  const crm = fixtureProject({ name: "Acme CRM", ai_attribution: false });
+  Object.assign(crm.series_monthly, { quality: [50, 48.5], multi_stack_pct: [10, 20] });
+  crm.meta.as_of = "2026-09-29";
+  const m = (a: number | null, b: number | null) => [a, b];
+  const fed = { quality: ["shop", "crm"], ai: ["shop"], peer_review: ["shop"], security: ["shop"] };
+  const fleet: FleetFile = {
+    schema: "pmx.fleet/1",
+    name: "Acme Engineering",
+    generated_at: "2026-10-01T00:00:00Z",
+    as_of: "2026-09-30",
+    range_start: "2026-08-01",
+    partial_week: false,
+    partial_month: false,
+    headline_month: "2026-09",
+    low_n_threshold: 10,
+    projects: [
+      { key: "shop", name: "Acme Shop", as_of: "2026-09-30", stale: false, velocity_basis: null },
+      { key: "crm", name: "Acme CRM", as_of: "2026-09-29", stale: true, velocity_basis: null },
+    ],
+    weeks: shop.weeks,
+    months: shop.months,
+    series_monthly: {
+      quality: m(60, 63.2),
+      multi_stack_pct: m(17.5, 35),
+      active_devs: m(8, 8),
+      ai_assist_commit_pct: m(20, 41.2),
+      review_coverage_pct: m(85.7, 0),
+      security_score: m(52.1, 40),
+    },
+    n_monthly: { multi_stack_pct: m(8, 8), review_coverage_pct: m(14, 20) },
+    series_weekly: {},
+    n_weekly: {},
+    coverage_monthly: [
+      { fed, notes: {} },
+      { fed, notes: {} },
+    ],
+    coverage_weekly: shop.weeks.map(() => ({ fed, notes: {} })),
+  };
+  return { fleet, projects: { shop, crm } };
 }

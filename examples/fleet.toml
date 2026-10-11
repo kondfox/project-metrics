@@ -1,0 +1,5 @@
+# A local fleet (`pmx fleet serve|export`): several projects on one page.
+# Each entry is a project workspace folder (with pmx.toml and out/project.json from `pmx collect`),
+# relative to this file. pmx reads out/project.json only, never out/private/.
+name = "Acme Engineering"
+projects = ["acme-shop", "acme-crm", "acme-mobile"]

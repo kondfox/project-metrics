@@ -4,8 +4,8 @@
 > the git-derived metrics (activity, rework, tests/docs-with-code, multi-stack, AI-assisted), the
 > snapshot metrics (duplication, complexity, dependency vulnerabilities, secrets, SAST) and the PR flow
 > from GitHub or GitLab (peer review, cycle time, review wait, mentoring) incrementally, reproduces the
-> private prototype, and shows a project dashboard. Velocity comes next. The design lives in the
-> [wiki](wiki/README.md).
+> private prototype, and shows a project dashboard. Velocity (M5, LLM-scored) and the local fleet view
+> (M6) are built and awaiting their exit checks. The design lives in the [wiki](wiki/README.md).
 
 ## Try it
 
@@ -13,7 +13,8 @@ Needs Rust (stable) with the `wasm32-unknown-unknown` target (`rustup target add
 Node ≥ 20.19 (the build compiles the dashboard) and git ≥ 2.30. Without the target or Node pmx still
 builds, but with a reduced or placeholder dashboard.
 
-Try it on a fictional project first: `pmx demo /tmp/acme && pmx -C /tmp/acme serve --open`.
+Try it on a fictional project first: `pmx demo /tmp/acme && pmx -C /tmp/acme serve --open`, or on a
+fictional fleet of three: `pmx demo /tmp/acme-fleet --fleet && pmx -C /tmp/acme-fleet fleet serve --open`.
 
 ```sh
 cargo build --release && export PATH="$PWD/target/release:$PATH"
@@ -33,6 +34,15 @@ pmx collect                  # progress + ETA; Ctrl-C and re-run to resume
 pmx serve --open             # the dashboard at http://127.0.0.1:7878 (includes the private lead view)
 pmx export --format html     # out/dashboard.html: one self-contained file to share
 pmx export --format long --weekly
+```
+
+Several projects make a **fleet**: a `fleet.toml` lists their workspace folders
+([example](examples/fleet.toml)), and
+
+```sh
+cd ~/metrics
+pmx fleet serve --open       # every project's headlines side by side; click one for its dashboard
+pmx fleet export             # out/fleet.json + out/fleet.html (one shareable page, no per-person data)
 ```
 
 `collect` writes `out/project.json` (team level; people are pseudonymous ids) and

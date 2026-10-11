@@ -123,6 +123,9 @@ enum Command {
         /// server).
         #[arg(long)]
         dev_data: Option<PathBuf>,
+        /// Make a fleet instead: three fictional projects and a fleet.toml.
+        #[arg(long)]
+        fleet: bool,
     },
     /// Serve the dashboard on http://127.0.0.1 (re-reads out/ on every reload; includes the
     /// private lead view, since only this machine can connect).
@@ -149,6 +152,37 @@ enum Command {
         #[arg(long)]
         with_private: bool,
     },
+    /// Combine several projects into the fleet view (fleet.toml lists their workspaces).
+    #[command(subcommand)]
+    Fleet(FleetCommand),
+}
+
+#[derive(Subcommand)]
+enum FleetCommand {
+    /// Serve the fleet page on http://127.0.0.1 (re-reads every project.json on reload).
+    Serve {
+        #[command(flatten)]
+        manifest: ManifestArg,
+        #[arg(long, default_value_t = 7878)]
+        port: u16,
+        #[arg(long)]
+        open: bool,
+    },
+    /// Write fleet.json and fleet.html (one self-contained page, shareable: no per-person data).
+    Export {
+        #[command(flatten)]
+        manifest: ManifestArg,
+        /// Folder to write into (default: out/ next to the manifest).
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
+}
+
+#[derive(Args)]
+struct ManifestArg {
+    /// The fleet manifest (default: fleet.toml in the workspace folder).
+    #[arg(long, default_value = pm_config::fleet::FLEET_FILE)]
+    manifest: PathBuf,
 }
 
 #[derive(Args)]
@@ -836,7 +870,49 @@ fn run(cli: Cli) -> Result<()> {
             }
             println!("semgrep and jscpd are not installed by pmx: run `pmx doctor` for how.");
         }
-        Command::Demo { dir, as_of, dev_data } => {
+        Command::Demo {
+            dir,
+            as_of,
+            dev_data,
+            fleet: true,
+        } => {
+            let as_of = as_of.unwrap_or_else(today);
+            if dir.exists() && std::fs::read_dir(&dir)?.next().is_some() {
+                bail!("{} is not empty", dir.display());
+            }
+            let mut folders = Vec::new();
+            for v in &pmx::demo::FLEET {
+                let ws = pmx::demo::generate_variant(&dir.join(v.folder), as_of, v)?;
+                eprintln!("wrote the fictional project {} to {}", v.name, ws.root.display());
+                let mut opts = CollectOptions::new(as_of);
+                opts.fetch = false;
+                opts.pull_requests = pmx::PrSource::Fixed(pmx::demo::pull_requests_variant(as_of, v));
+                cmd_collect(&ws, opts, Mode::auto())?;
+                folders.push(format!("{:?}", v.folder));
+            }
+            let manifest = dir.join(pm_config::fleet::FLEET_FILE);
+            std::fs::write(
+                &manifest,
+                format!(
+                    "# A fictional fleet made by `pmx demo --fleet`.\n\nname = \"Acme Engineering (demo)\"\nprojects = [{}]\n",
+                    folders.join(", ")
+                ),
+            )?;
+            if let Some(dev) = dev_data {
+                let fleet = load_fleet(&manifest)?;
+                std::fs::create_dir_all(&dev)?;
+                std::fs::write(dev.join("fleet-data.json"), fleet.page_data("")?)?;
+                std::fs::write(dev.join("pm_wasm.wasm"), pmx::dashboard::engine_wasm())?;
+                eprintln!("dev data in {} (open the dev server with ?fleet)", dev.display());
+            }
+            eprintln!("next: pmx -C {} fleet serve --open", dir.display());
+        }
+        Command::Demo {
+            dir,
+            as_of,
+            dev_data,
+            fleet: false,
+        } => {
             let as_of = as_of.unwrap_or_else(today);
             let ws = pmx::demo::generate(&dir, as_of)?;
             eprintln!("wrote a fictional project to {}", dir.display());
@@ -867,6 +943,35 @@ fn run(cli: Cli) -> Result<()> {
                 pmx::dashboard::open_browser(&url);
             }
             pmx::dashboard::serve(listener, &out)?;
+        }
+        Command::Fleet(FleetCommand::Serve { manifest, port, open }) => {
+            let manifest = ws_dir.join(manifest.manifest);
+            let fleet = load_fleet(&manifest)?;
+            let listener = std::net::TcpListener::bind(("127.0.0.1", port))
+                .with_context(|| format!("cannot listen on 127.0.0.1:{port} (try --port)"))?;
+            let url = format!("http://{}/", listener.local_addr()?);
+            eprintln!(
+                "serving the fleet {} ({} projects) at {url} (Ctrl-C to stop)",
+                fleet.file.name,
+                fleet.projects.len()
+            );
+            if open {
+                pmx::dashboard::open_browser(&url);
+            }
+            pmx::dashboard::serve_page(listener, &|| {
+                pmx::fleet::Fleet::load(&manifest, now_rfc3339())?.render()
+            })?;
+        }
+        Command::Fleet(FleetCommand::Export { manifest, output }) => {
+            let manifest = ws_dir.join(manifest.manifest);
+            let fleet = load_fleet(&manifest)?;
+            let dir = output.unwrap_or_else(|| manifest.parent().unwrap_or(Path::new(".")).join("out"));
+            std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+            for (name, body) in [("fleet.json", fleet.json()), ("fleet.html", fleet.render()?)] {
+                let dest = dir.join(name);
+                std::fs::write(&dest, body).with_context(|| format!("writing {}", dest.display()))?;
+                eprintln!("wrote {}", dest.display());
+            }
         }
         Command::Export {
             format: Format::Html,
@@ -918,6 +1023,25 @@ fn run(cli: Cli) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn now_rfc3339() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+/// Load a fleet and say which projects were collected before the others.
+fn load_fleet(manifest: &Path) -> Result<pmx::fleet::Fleet> {
+    let fleet = pmx::fleet::Fleet::load(manifest, now_rfc3339())?;
+    for (name, as_of) in fleet.stale() {
+        eprintln!(
+            "⚠ {name} was collected as of {as_of}, before the fleet's {}: its later days count as missing",
+            fleet.file.as_of
+        );
+    }
+    if !pmx::dashboard::has_engine() {
+        eprintln!("note: this pmx was built without the WASM engine; custom ranges are off");
+    }
+    Ok(fleet)
 }
 
 fn main() -> ExitCode {
