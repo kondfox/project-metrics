@@ -229,8 +229,28 @@ only month-ends; `since` limits how far back trees are scanned.
 
 ## 4. Velocity (fleet headline) — [velocity-index.md](velocity-index.md)
 
-1. **Work packages.** Non-merge, non-excluded commits in the window are grouped by the first ticket id in
-   the subject (`\b[A-Z][A-Z0-9]{1,9}-\d+\b`), else by `author~ISO-week`. Package date = its last commit date; it is counted in that week and that month. (⟂ change vs prototype: modal commit month.)
+1. **Work packages** (decided 2026-10-11, plan D37). Non-merge, non-excluded commits in the window are
+   grouped by the **first rule that matches**:
+   1. **Ticket:** the first ticket id in the subject (`\b[A-Z][A-Z0-9]{1,9}-\d+\b`), across repos. A
+      commit without one that belongs to a PR whose ticketed commits all name **one** ticket joins that
+      ticket (the whole PR is one change).
+   2. **PR / MR:** the merged PR or MR the commit belongs to (§10.4), id `<repo>#<n>` (GitHub) or
+      `<repo>!<n>` (GitLab). Membership, first source that knows (plan D38):
+      1. the code host lists the commit among the PR's commits;
+      2. a merge commit brought it in: a merge whose SHA is a PR's landed SHA, or whose message names
+         a PR (`See merge request <path>!<n>`, `Merge pull request #<n>`), owns the non-merge commits of
+         `<merge>^1..<merge>^2`. Each commit goes to the earliest such merge; merges from a long-lived
+         branch (`develop`, `dev`, `main`, `master`, `staging`, `production`, `release*`) are skipped,
+         so a release merge never swallows direct pushes. A GitLab MR named with another project path
+         (a moved repo) gets the id `<repo>:<path>!<n>`;
+      3. a rebased PR: author email and subject match one of the PR's commits within a day;
+      4. on GitHub, a squash subject ending in `(#<n>)`.
+   3. **Author-week:** `author~ISO-week`, for every other commit.
+
+   A repo with a code host but no PR data (never fetched, no token) groups by rules 1 and 3 (and the
+   `(#<n>)` subjects), with a warning, and `velocity.health` records the repo, so the coarser grouping
+   is visible. Package date = its last commit date; it is counted in that week and that month. (⟂ change
+   vs prototype: modal commit month; PR packages.)
 2. **Diff extraction.** Each package's diff, excluding generated paths (§1.4 + `migrations/`, `Pods/`,
    `__generated__/`, `*.min.js`), capped at **24,000 bytes** (flag `truncated`).
 3. **LLM scoring** against the six-axis rubric → R1–R6 (0–3 each); sum → points
@@ -462,9 +482,11 @@ schema for every provider. Design: [tool-implementation-plan.md §6](tool-implem
   its commits. Lead-only, never a headline.
 
 ### 10.4 Code-host adapter (PR/MR)
-- Interface: `merged_prs(project, since, selection, until, files) → [{ id, author{login, name?, bot},
-  created_at, merged_at, updated_at?, additions?, deletions?, files?[{path, additions}],
-  reviews[{by{login, name?, bot}, at}] }]` (crate `pm-codehost`).
+- Interface: `merged_prs(project, since, selection, until, files, commits) → [{ id, author{login, name?,
+  bot}, created_at, merged_at, updated_at?, additions?, deletions?, files?[{path, additions}],
+  reviews[{by{login, name?, bot}, at}], landed[sha], commits?[{sha, subject, author_email?,
+  authored_at?}] }]` (crate `pm-codehost`). `landed` = the merge or squash commit; `commits` are
+  fetched only when a classifier is configured (Velocity's PR packages, §4).
 - **GitHub:** GraphQL (`pullRequests(states: MERGED)`, newest update first) with a token
   (`Authorization: bearer`); reviews = submitted reviews; `files` only for `per-file` repos. GitHub
   Enterprise Server: `base` = the server URL (`<base>/api/graphql`). (Prototype read a manual `gh`

@@ -28,6 +28,7 @@ mention `collector/…` and `tools/…`: these are the private Python prototype,
 - [fleet-vision.md](fleet-vision.md) — the headline fleet metrics and the drill-down principle
 - [quality-index.md](quality-index.md) — the composite **Quality** score
 - [velocity-index.md](velocity-index.md) — **Velocity**: six-axis complexity points ÷ capacity
+- [velocity-metrics.md](velocity-metrics.md) — the proposed `six-axis@3` scoring: exact question prompts and classification types
 - [security-index.md](security-index.md) — **Security** score from dependency vulnerabilities (OSV) and secrets
 - [change-failure-proxy.md](change-failure-proxy.md) — commit convention + detection spec for a change-failure guardrail (not in v1)
 - [fullstack-metrics.md](fullstack-metrics.md) — multi-stack progression design (stack + technology breadth, mentoring)

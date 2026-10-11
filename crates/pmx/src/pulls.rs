@@ -2,7 +2,7 @@
 //! `code_host_id`, fetched incrementally and stored per PR in the cache, then resolved to people and
 //! stacks for the PR-flow metrics (spec §8).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -46,6 +46,8 @@ pub struct PullSettings<'a> {
     pub use_cache: bool,
     /// Continue from the last fetch (default); `false` fetches everything again.
     pub incremental: bool,
+    /// Fetch each PR's commits too (a classifier is configured: Velocity's PR packages, spec §4).
+    pub commits: bool,
     pub progress: Progress,
 }
 
@@ -57,8 +59,23 @@ pub struct RepoPrs {
 }
 
 pub struct Pulls {
-    pub info: PullsInfo,
+    /// `None` = peer review not measured: no code host, or a repo without PR data (partial counts
+    /// would read as a drop).
+    pub info: Option<PullsInfo>,
+    /// Every repo that has PR data, measured or not: Velocity groups commits by PR wherever it can.
     pub repos: Vec<RepoPrs>,
+    /// Repos with a `code_host_id` but no PR data.
+    pub missing: Vec<String>,
+}
+
+impl Pulls {
+    fn none() -> Pulls {
+        Pulls {
+            info: None,
+            repos: Vec::new(),
+            missing: Vec::new(),
+        }
+    }
 }
 
 /// The repos to read and their code-host project ids.
@@ -111,6 +128,8 @@ struct StoreSink<'a> {
     cache: Option<Cache>,
     scope: String,
     known: HashMap<String, Option<String>>,
+    /// Stored PRs without their commits, while commits are wanted: fetched again.
+    without_commits: HashSet<String>,
     fetched: Vec<MergedPr>,
     progress: &'a Progress,
     listed: &'a std::sync::atomic::AtomicU64,
@@ -125,6 +144,9 @@ impl Sink for StoreSink<'_> {
     }
 
     fn is_current(&self, id: &str, updated_at: Option<&DateTime<FixedOffset>>) -> bool {
+        if self.without_commits.contains(id) {
+            return false;
+        }
         match (self.known.get(id), updated_at) {
             (Some(Some(stored)), Some(u)) => DateTime::parse_from_rfc3339(stored).is_ok_and(|s| s == *u),
             _ => false,
@@ -163,18 +185,18 @@ fn host(ws: &Workspace, source: &PrSource, token: String) -> Box<dyn CodeHost> {
     }
 }
 
-/// Fetch (or read from the cache) every repo's merged PRs. `Ok(None)` = not measured, with the
-/// reason as a warning.
-pub fn run_stage(s: &PullSettings) -> Result<Option<Pulls>> {
+/// Fetch (or read from the cache) every repo's merged PRs. `info: None` = peer review not measured,
+/// with the reason as a warning.
+pub fn run_stage(s: &PullSettings) -> Result<Pulls> {
     let p = &s.progress;
     let Some(code_host) = &s.ws.config.code_host else {
-        return Ok(None);
+        return Ok(Pulls::none());
     };
     let repos = code_host_repos(s.ws);
     if repos.is_empty() {
         p.warn("no repo has a `code_host_id`: peer review not measured (`pmx repo set <name> --code-host-id …`)");
         p.skip(PULLS, "no code_host_id");
-        return Ok(None);
+        return Ok(Pulls::none());
     }
     let env = token_env(s.ws).expect("code host is set");
     let env_token = std::env::var(&env).ok().filter(|t| !t.trim().is_empty());
@@ -210,20 +232,32 @@ pub fn run_stage(s: &PullSettings) -> Result<Option<Pulls>> {
             Some(c) if s.incremental && s.selection == Selection::UpdatedSince => c.pr_synced(&scope)?,
             _ => None,
         };
-        let since = synced
-            .as_deref()
-            .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
-            .map(|t| t.with_timezone(&Utc) - Duration::hours(OVERLAP_HOURS))
-            .map_or(range_start, |t| t.max(range_start));
         let known = match &cache {
             Some(c) if s.incremental => c.pr_versions(&scope)?,
             _ => HashMap::new(),
         };
+        // PRs stored before commits were wanted are fetched again, listing from the start once.
+        let without_commits: HashSet<String> = match &cache {
+            Some(c) if s.commits && !known.is_empty() => c
+                .prs::<MergedPr>(&scope)?
+                .into_iter()
+                .filter(|pr| pr.commits.is_none())
+                .map(|pr| pr.id)
+                .collect(),
+            _ => HashSet::new(),
+        };
+        let since = synced
+            .as_deref()
+            .filter(|_| without_commits.is_empty())
+            .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
+            .map(|t| t.with_timezone(&Utc) - Duration::hours(OVERLAP_HOURS))
+            .map_or(range_start, |t| t.max(range_start));
         let had_data = !known.is_empty();
         let mut sink = StoreSink {
             cache,
             scope: scope.clone(),
             known,
+            without_commits,
             fetched: Vec::new(),
             progress: p,
             listed: &listed,
@@ -245,6 +279,7 @@ pub fn run_stage(s: &PullSettings) -> Result<Option<Pulls>> {
                     selection: s.selection,
                     until,
                     files: repo.role == RepoRole::PerFile,
+                    commits: s.commits,
                 };
                 h.merged_prs(&q, &mut sink).map_err(anyhow::Error::from)
             }
@@ -303,19 +338,48 @@ pub fn run_stage(s: &PullSettings) -> Result<Option<Pulls>> {
             "peer review not measured: no PR data for {}",
             missing.join(", ")
         ));
-        return Ok(None);
+        return Ok(Pulls {
+            info: None,
+            repos: out,
+            missing,
+        });
     }
-    Ok(Some(Pulls {
-        info: PullsInfo {
+    Ok(Pulls {
+        info: Some(PullsInfo {
             host: match code_host.kind {
                 CodeHostKind::Github => "github".into(),
                 CodeHostKind::Gitlab => "gitlab".into(),
             },
             repos: out.iter().map(|r| r.repo.clone()).collect(),
             sizes: code_host.kind == CodeHostKind::Github,
-        },
+        }),
         repos: out,
-    }))
+        missing,
+    })
+}
+
+/// The PRs an earlier `collect` stored, without fetching (`classifier eval` groups packages exactly
+/// as that run did). Repos with nothing stored are `missing`.
+pub fn stored(ws: &Workspace) -> Result<Pulls> {
+    let path = ws.state_dir().join("cache.sqlite");
+    if ws.config.code_host.is_none() || !path.exists() {
+        return Ok(Pulls::none());
+    }
+    let cache = Cache::open(&path)?;
+    let mut out = Pulls::none();
+    for (repo, project_id) in code_host_repos(ws) {
+        let prs: Vec<MergedPr> = cache.prs(&scope(ws, repo, &project_id, Selection::UpdatedSince))?;
+        if prs.is_empty() {
+            out.missing.push(repo.display_name());
+        } else {
+            out.repos.push(RepoPrs {
+                repo: repo.display_name(),
+                role: repo.role,
+                prs,
+            });
+        }
+    }
+    Ok(out)
 }
 
 /// The PR's stack (spec §8): the repo role, or in a per-file repo the role with the most added
@@ -416,6 +480,8 @@ mod tests {
                     at: t(at),
                 })
                 .collect(),
+            landed: Vec::new(),
+            commits: None,
         }
     }
 

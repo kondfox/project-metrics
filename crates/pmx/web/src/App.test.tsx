@@ -102,6 +102,9 @@ describe("<App>", () => {
     expect(table).toHaveTextContent("tidy the checkout form");
     expect(table).not.toHaveTextContent("SHOP-40");
     expect(screen.getByText(/six-axis@2 rubric by claude-code:claude-sonnet-5-5/)).toBeInTheDocument();
+    expect(screen.getByText(/Grouped: 2 by ticket, 0 by PR \/ MR, 1 by author-week/)).toHaveTextContent(
+      "No PR data for shop-web",
+    );
     expect(screen.queryByRole("table", { name: "Points by person" })).not.toBeInTheDocument();
   });
 

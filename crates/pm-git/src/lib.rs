@@ -56,6 +56,14 @@ pub enum Dialect {
     Prototype,
 }
 
+/// A merge commit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Merge {
+    pub sha: String,
+    pub parents: Vec<String>,
+    pub message: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct Git {
     dir: PathBuf,
@@ -196,6 +204,47 @@ impl Git {
             Ok(())
         })?;
         Ok(commits)
+    }
+
+    /// The merge commits of `range`, oldest first (committer date): what grouped commits into PRs
+    /// (spec §4).
+    pub fn merges(&self, range: &LogRange) -> Result<Vec<Merge>> {
+        let mut args = vec![
+            "log".to_string(),
+            "--merges".into(),
+            "--date-order".into(),
+            "--reverse".into(),
+            format!("--format={REC}%H%x1f%P%x1f%B"),
+        ];
+        args.extend(range.args());
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let out = self.run(&refs)?;
+        Ok(out
+            .split(REC)
+            .filter(|r| !r.trim().is_empty())
+            .filter_map(|r| {
+                let mut f = r.splitn(3, '\x1f');
+                let sha = f.next()?.trim().to_string();
+                let parents = f.next()?.split_whitespace().map(String::from).collect();
+                let message = f.next().unwrap_or("").trim().to_string();
+                Some(Merge { sha, parents, message })
+            })
+            .collect())
+    }
+
+    /// The non-merge commits a merge brought in: reachable from its second parent but not from its
+    /// first (`merge^1..merge^2`).
+    pub fn brought_in(&self, merge: &Merge) -> Result<Vec<String>> {
+        let (Some(first), Some(second)) = (merge.parents.first(), merge.parents.get(1)) else {
+            return Ok(Vec::new());
+        };
+        let range = format!("{first}..{second}");
+        Ok(self
+            .run(&["rev-list", "--no-merges", &range, "--"])?
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect())
     }
 
     /// Number of non-merge commits in `range` (cheap; for planning).

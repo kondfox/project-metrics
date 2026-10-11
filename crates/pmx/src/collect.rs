@@ -623,6 +623,7 @@ pub fn collect(ws: &Workspace, opts: &CollectOptions) -> Result<Collected> {
         selection: opts.pr_selection,
         use_cache: opts.use_cache,
         incremental: opts.incremental,
+        commits: opts.velocity && crate::velocity::configured(ws),
         progress: p.clone(),
     };
     let run_snapshots = || -> Result<Option<(SnapshotInput, pm_snapshot::Tools)>> {
@@ -678,25 +679,27 @@ pub fn collect(ws: &Workspace, opts: &CollectOptions) -> Result<Collected> {
         progress: p.clone(),
     };
     let velocity_repos = crate::velocity::repos(ws, &plans);
-    let (snapshots, pulls, velocity) = std::thread::scope(|s| {
-        let pulls = s.spawn(|| crate::pulls::run_stage(&pull_settings));
-        let velocity = s.spawn(|| {
-            if opts.velocity {
-                crate::velocity::run_stage(&velocity_settings, &velocity_repos)
+    // Velocity groups commits by PR (spec §4), so it runs after the pull stage; snapshots run
+    // alongside both.
+    let (snapshots, pulls_velocity) = std::thread::scope(|s| {
+        let pulls_velocity = s.spawn(|| -> Result<_> {
+            let pulls = crate::pulls::run_stage(&pull_settings)?;
+            let velocity = if opts.velocity {
+                let prs = crate::velocity::PrIndex::new(ws, &pulls.repos, pulls.missing.clone());
+                crate::velocity::run_stage(&velocity_settings, &velocity_repos, prs)?
             } else {
-                Ok(None)
-            }
+                None
+            };
+            Ok((pulls, velocity))
         });
         let snapshots = run_snapshots();
         (
             snapshots,
-            pulls.join().unwrap_or_else(|e| std::panic::resume_unwind(e)),
-            velocity.join().unwrap_or_else(|e| std::panic::resume_unwind(e)),
+            pulls_velocity.join().unwrap_or_else(|e| std::panic::resume_unwind(e)),
         )
     });
     let snapshots = snapshots?;
-    let pulls = pulls?;
-    let velocity = velocity?;
+    let (pulls, velocity) = pulls_velocity?;
     if let Some(v) = &velocity {
         let vdays = pm_metrics::velocity::velocity_days(&v.packages);
         let window: Days = vdays
@@ -705,7 +708,7 @@ pub fn collect(ws: &Workspace, opts: &CollectOptions) -> Result<Collected> {
             .collect();
         merge_days(&mut days, &window);
     }
-    if let Some(pulls) = &pulls {
+    if pulls.info.is_some() {
         let inputs = crate::pulls::inputs(
             &pulls.repos,
             &shared.identity,
@@ -752,7 +755,7 @@ pub fn collect(ws: &Workspace, opts: &CollectOptions) -> Result<Collected> {
             "spec".into()
         },
         snapshots: snapshots.map(|(input, _)| input).unwrap_or_default(),
-        pulls: pulls.map(|p| p.info),
+        pulls: pulls.info,
         velocity,
     });
     Ok(Collected {

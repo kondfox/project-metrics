@@ -78,6 +78,25 @@ pub struct MergedPr {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files: Option<Vec<FileChange>>,
     pub reviews: Vec<Review>,
+    /// The commits the PR landed as on the target branch: its merge commit, or the squash commit
+    /// (GitLab may report both).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub landed: Vec<String>,
+    /// The PR's own commits, fetched for Velocity's PR packages (spec §4); `None` = not fetched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commits: Option<Vec<PrCommit>>,
+}
+
+/// One commit of a PR, as the host lists it. A rebased PR lands with new SHAs, so author email,
+/// subject and time are kept to recognize them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrCommit {
+    pub sha: String,
+    pub subject: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authored_at: Option<DateTime<FixedOffset>>,
 }
 
 /// Which merged PRs a fetch returns.
@@ -102,6 +121,8 @@ pub struct Query<'a> {
     pub until: Option<NaiveDate>,
     /// Fetch the changed files (per-file repos, spec §8: the PR's stack is its dominant role).
     pub files: bool,
+    /// Fetch each PR's commits (Velocity's PR packages, spec §4; one more request per MR on GitLab).
+    pub commits: bool,
 }
 
 /// Receives a fetch's results as they arrive, so a caller can store each PR at once (an

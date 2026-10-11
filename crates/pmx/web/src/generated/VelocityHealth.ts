@@ -11,4 +11,12 @@ escalated: number,
 /**
  * Kept below the confidence gate.
  */
-low_confidence: number, };
+low_confidence: number, 
+/**
+ * Packages by grouping rule (spec §4): ticket, PR / MR, author-week.
+ */
+by_ticket: number, by_pr: number, by_author_week: number, 
+/**
+ * Repos with a code host but no PR data: their untagged commits fell back to author-week.
+ */
+no_pr_data: Array<string>, };

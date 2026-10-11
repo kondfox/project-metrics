@@ -60,6 +60,9 @@ in the browser. A second command combines several projects into the **fleet view
 | D33 | **Fleet page = the dashboard app with a drill-down** (owner decision, M6): the same React bundle renders the fleet when its data is a fleet. `fleet.html` carries `fleet.json` and every project's `project.json` (never `leads.json`), so it stays one self-contained, shareable file (D17); a project row opens that project's dashboard in the same page (`#p=<key>&monthly&…`, cadence and range kept both ways). One WASM instance holds every project by key and pools any range (`fleet` op); a node check proves it reproduces every bucket of `fleet.json` | 2026-10-11 |
 | D34 | **Fleet row pooling** (owner decision, M6; `pm-metrics` `fleet`): flow ratios pool Σ numerators ÷ Σ denominators over every project; people stay per project (pseudonymous ids can't be matched across projects, so one person in two projects counts twice). AI-assisted pools only projects that attribute AI; peer review only projects with PR data; duplication joins the fleet's Quality only when every project measured it. Security shows the **worst** project (a gate, [quality-index.md](quality-index.md) §2). Velocity pools Σ points ÷ Σ FTE-days only when every scored project has the same rubric and classifiers and the same denominator (all FTE or all engineer-days), else "not comparable". Each pooled value records which projects fed it (shown as "2/3"); the table also counts projects per band, since a fleet scalar can hide one project falling | 2026-10-11 |
 | D35 | **Projects collected on different dates** (owner decision, M6): the fleet's as-of is the latest; an earlier project is marked "as of <date>" with a notice and a CLI warning, and its missing days count as missing, not zero | 2026-10-11 |
+| D36 | **`six-axis@3` (proposed, awaiting owner review):** the `@1` anchors asked as one yes/no per anchor with a probability from every provider (`stated` for `claude-code` / `anthropic`), level = highest clear yes (P ≥ 0.65), R1 from a per-file layer choice, R5 without folder counting, fixed worked examples; packages unchanged; validated Opus-`@3` vs Sonnet-`@3`. See §6.4.1 | 2026-10-11 |
+| D37 | **PR / MR packages** (owner decision): work packages take the first matching rule: the ticket id in the subject, else the merged PR/MR the commit belongs to, else author-week (spec §4). Untagged commits of a PR whose ticketed commits name one ticket join that ticket. The code-host fetch gains each PR's commits (GitHub: in the same GraphQL query; GitLab: `/merge_requests/:iid/commits`, only when a classifier is configured) and its merge/squash commit; commits match by SHA, else (rebased PRs) by author email + subject within a day, else (GitHub) a squash subject ending in `(#n)`, which works offline too. Stored PRs without commits are fetched again once. A repo without PR data falls back with a warning and a `velocity.health` mark. Velocity now runs after the pull stage | 2026-10-11 |
+| D38 | **PR membership from git where the host is silent** (owner decision): a GitLab instance returned empty commit lists for most merged MRs (`X-Total` > 0, empty body), and a moved repo's older MRs live in another project. So, after the host's own commit list, a merge commit decides membership: a merge whose SHA is a PR's landed SHA, or whose message names a PR, owns `merge^1..merge^2`'s non-merge commits (earliest merge wins; merges from long-lived branches skipped; MRs of another project path get `<repo>:<path>!<n>`). Then the rebase match and `(#n)` (spec §4 rule 2) | 2026-10-11 |
 | D10 | The parity harness is a workspace crate (`pmx-parity`, not published) that reads the golden set from `PMX_GOLDEN_DIR` and prints to the terminal only. It runs twice: in the **prototype dialect** (the prototype's test rules and git reading) every M1 series must match exactly; in the spec dialect the intentional differences are reported | 2026-10-09 |
 
 ---
@@ -437,6 +440,68 @@ $0.35. One package is one call (70–500 ms).
 
 ⟂ **spec change (§10.3):** the output contract `{id, R1..R6, description}` stays as it is, but it is now
 derived from schema answers. The rubric version bump (`six-axis@2`) invalidates the score cache.
+
+### 6.4.1 `six-axis@3` (proposed 2026-10-11, awaiting owner review)
+
+**Why a new version.** The first evals on the pilot projects (private; method in "M5 progress") failed
+for Sonnet *and* for Opus under `six-axis@2`: both scored a third to a half more points than the Opus
+`six-axis@1` reference, with similar per-axis agreement. The same model scoring higher under `@2` puts
+the cause in the protocol, not the model. Three defects of `@2`:
+- **R5 counts folders.** A "module" is the repo plus the first two directories, so the same change gets
+  a different blast radius in a deep monorepo, a flat repo or across repos. R5 had the lowest agreement
+  in every run.
+- **R1 claims are unchecked.** Eight independent "does it touch layer X?" questions; nothing ties a
+  "yes" to a changed file, and the model never sees the total it is producing.
+- **"Take the lower anchor" depends on the provider.** The rule needs a probability per level, but a
+  provider without one (`claude-code`, `confidence_source = none`) returns one level as one-hot, so the
+  rule never fires there and the gate is off. A scoring rule must not depend on the provider.
+
+`@1` is not the alternative: it scores packages in batches (a package's score depends on its
+neighbours, so it is neither fair nor cacheable), lets the model invent its own layers, and leaves
+"take the lower" unchecked.
+
+**What stays.** The anchor texts (from `six-axis@1.md`), the size and points table, the hard rules, one
+package per call, the state (subjects, files with class and role, the filtered diff ≤ 24 KB), the cache
+key (rubric version included), and **the work packages exactly as they are** (ticket id across repos,
+else author-week).
+
+**What changes** (exact question texts, prompt template and examples:
+[velocity-metrics.md](velocity-metrics.md)).
+
+| Axis | `six-axis@3` question(s) | Decided in code |
+|---|---|---|
+| R2 data model · R3 contract · R4 algorithmic · R6 verification | One **yes/no per anchor above 0** (three per axis), worded from the anchor, e.g. R2-2 "Does the change add a new table, entity, view, stored procedure or enum type?"; R6 as needs: "Is more than a glance needed…?", "Is a unit test required…?", "Is an integration, migration or end-to-end test required…?" | Level = the highest anchor answered a **clear yes**: P(yes) ≥ τ (τ = 0.65, in the question set). An anchor between 0.5 and τ is ambiguous and does not raise the level: "when two anchors fit, take the lower" as a rule, not a request. No clear yes → 0 |
+| R5 blast radius | Yes/no per anchor: "Could a mistake break behaviour beyond the changed file, within one module?", "…across several modules?", and the `@2` app-wide question for 3. The file, repo and directory counts are given as context, not as the answer | Same highest-clear-yes rule. No folder counting |
+| R1 layers | One **choice per changed file**: which layer it belongs to: the fixed eight (transport/DTO, validation, service, domain, persistence, database, UI, navigation) or "none". Files pm-classify marks test, docs or config are "none" without asking; at most the 40 files with the most changed lines are asked, the rest count as unknown (recorded) | Count distinct layers among the files → 1 = 0, 2 = 1, 3–4 = 2, 5+ = 3 (`@1`'s bands). Every layer is backed by a file, so each R1 can be audited |
+
+**Probabilities from every provider.** Every yes/no answer is P(yes) in [0, 1], and every per-file
+choice carries a probability for the chosen option:
+- Jev and logprobs (`openai-compatible`) give them natively, as now.
+- `claude-code` and `anthropic` are asked to **state** them in the forced JSON schema (a number 0–1 per
+  question). New `confidence_source = "stated"`. A model that will only answer 0 or 1 still works: the
+  rule degrades to plain yes/no.
+- `samples = k` averages k stated answers (`sampled`), the most robust choice for `claude-code`.
+- The confidence gate applies to every source. An answer's confidence is max(P, 1 − P); below the gate
+  (per classifier, as now) it is re-asked once in a fresh call and the two are averaged, then it goes to
+  the fallback as in D31.
+
+**Fixed worked examples, never batches.** The question set carries three or four fictional, already
+answered example packages (in the repo, versioned with the set) that go into every prompt. They give the
+model the comparison points a batch gave `@1`, but the same ones for every package, so scores stay
+independent and cacheable.
+
+**Validation (decided for now: model against model).** Opus under `@3` scores the reference set's 240
+packages one per call (no batches); that becomes the `@3` reference. Sonnet under `@3` is evaluated
+against it with `pmx classifier eval` and the D32 thresholds, and Opus's own test–retest is reported.
+The Opus `@1` set stays as a secondary comparison (drift only). Agreement between two models shows
+consistency, not correctness; a human-labelled set remains the stronger check and is deferred.
+
+**Cost.** About 15 yes/no questions plus up to 40 per-file choices, still one call per package: longer
+calls, not more of them.
+
+**Not comparable across versions.** `@2` and `@3` scores never pool (the fleet already requires one
+basis, D34). Switching versions re-scores every package: the rubric version is part of the answer cache
+key, so no `--full` is needed.
 
 ### 6.5 Qualifying a classifier
 

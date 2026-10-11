@@ -18,6 +18,7 @@ const API: &str = "https://gitlab.example.com/api/v4/projects/7/merge_requests";
 struct FakeGitLab {
     mrs: Mutex<Vec<Value>>,
     notes: Mutex<Vec<(u64, Value)>>,
+    commits: Mutex<Vec<(u64, Value)>>,
     seen: Mutex<Vec<String>>,
 }
 
@@ -59,6 +60,15 @@ impl Http for FakeGitLab {
             });
         }
         let iid: u64 = rest[1..].split('/').next().unwrap().parse().unwrap();
+        if rest.contains("/commits") {
+            let commits = self.commits.lock().unwrap();
+            let first = rest.ends_with("&page=1");
+            return ok(commits
+                .iter()
+                .find(|(i, _)| *i == iid && first)
+                .map(|(_, c)| c.clone())
+                .unwrap_or(json!([])));
+        }
         let notes = self.notes.lock().unwrap();
         ok(notes
             .iter()
@@ -222,4 +232,73 @@ fn not_measured_without_code_host_data() {
     let c = collect(&ws, &options(PrSource::Live)).unwrap();
     assert!(c.project.meta.not_measured.contains(&"peer_review".to_string()));
     assert!(c.warnings.iter().all(|w| !w.contains("PR")), "{:?}", c.warnings);
+}
+
+/// Velocity groups untagged commits by their MR (spec §4): with a classifier configured, MR commits
+/// are fetched, and MRs stored without them are fetched again once.
+#[cfg(unix)]
+#[test]
+fn velocity_packages_follow_merge_requests() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = workspace(tmp.path(), "PMX_TEST_UNSET_TOKEN");
+    let sha = String::from_utf8(
+        std::process::Command::new("git")
+            .args(["-C", &tmp.path().join("api").display().to_string(), "rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+    let gl = Arc::new(FakeGitLab::default());
+    *gl.mrs.lock().unwrap() = vec![mr(1, "ann", "2025-02-03T09:00:00Z", "2025-02-04T09:00:00Z")];
+    *gl.commits.lock().unwrap() = vec![(1, json!([{"id": sha, "title": "feat: a"}]))];
+    let src = PrSource::Http(gl.clone());
+
+    // No classifier: no commits are fetched.
+    collect(&ws, &options(src.clone())).unwrap();
+    assert!(!gl.seen().iter().any(|u| u.contains("/commits")));
+
+    // A classifier: the stored MR is fetched again with its commits, listing from the start.
+    let mut answers = json!({});
+    for id in pm_llm::rubric::LAYERS {
+        answers[id] = json!({"type": "noul", "noul": 0.05});
+    }
+    for id in ["r2_data_model", "r3_contract", "r4_algorithmic", "r6_verification"] {
+        answers[id] = json!({"type": "score", "score": 1, "probabilities": {"1": 1.0}});
+    }
+    answers["r5_app_wide"] = json!({"type": "noul", "noul": 0.05});
+    let out = json!({"model": "fake", "answers": answers, "confidence_source": "none"});
+    std::fs::write(tmp.path().join("answer.json"), out.to_string()).unwrap();
+    let script = tmp.path().join("cls.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\ncat {}\n",
+            tmp.path().join("answer.json").display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut toml = std::fs::read_to_string(tmp.path().join("pmx.toml")).unwrap();
+    toml.push_str(&format!(
+        "\n[classifiers.fake]\nprovider = \"command\"\ncommand = [\"sh\", \"{}\"]\n\n[velocity]\nclassifier = \"fake\"\n",
+        script.display()
+    ));
+    std::fs::write(tmp.path().join("pmx.toml"), toml).unwrap();
+    let ws = Workspace::load(tmp.path()).unwrap();
+    let c = collect(&ws, &options(src.clone())).unwrap();
+    let seen = gl.seen();
+    assert!(seen[0].contains("updated_after=2025-01-01T00:00:00Z"), "{seen:?}");
+    assert!(seen.iter().any(|u| u.contains("/1/commits")), "{seen:?}");
+    let v = c.project.velocity.as_ref().unwrap();
+    assert_eq!(v.packages.len(), 1);
+    assert_eq!(v.packages[0].id, "api!1", "feat: a has no ticket: its MR's package");
+    assert_eq!((v.health.by_pr, v.health.by_ticket, v.health.by_author_week), (1, 0, 0));
+
+    // Next run: the MR is current, nothing is fetched again.
+    collect(&ws, &options(src)).unwrap();
+    assert!(!gl.seen().iter().any(|u| u.contains("/commits")));
 }

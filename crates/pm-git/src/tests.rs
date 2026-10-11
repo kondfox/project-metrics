@@ -166,3 +166,49 @@ fn archive_and_month_end_lookup() {
     assert!(g.blob_id(&tip, "src/b.ts").is_some());
     assert!(g.blob_id(&jan, "src/b.ts").is_none());
 }
+
+#[test]
+fn merges_and_what_they_brought_in() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    git(dir, &["init", "-q"], "2025-01-01", "x", "x@example.com");
+    write(dir, "a.txt", "a\n");
+    commit(dir, "2025-01-01", "init");
+    git(
+        dir,
+        &["checkout", "-q", "-b", "feature"],
+        "2025-01-02",
+        "x",
+        "x@example.com",
+    );
+    write(dir, "b.txt", "b\n");
+    commit(dir, "2025-01-02", "add b");
+    write(dir, "c.txt", "c\n");
+    commit(dir, "2025-01-03", "add c");
+    git(dir, &["checkout", "-q", "main"], "2025-01-04", "x", "x@example.com");
+    write(dir, "d.txt", "d\n");
+    commit(dir, "2025-01-04", "direct push");
+    let msg = "Merge branch 'feature' into 'main'\n\nSee merge request acme/shop!7";
+    git(
+        dir,
+        &["merge", "-q", "--no-ff", "feature", "-m", msg],
+        "2025-01-05",
+        "x",
+        "x@example.com",
+    );
+
+    let g = Git::open(dir);
+    let merges = g.merges(&LogRange::new("main")).unwrap();
+    assert_eq!(merges.len(), 1);
+    assert_eq!(merges[0].parents.len(), 2);
+    assert!(merges[0].message.ends_with("See merge request acme/shop!7"));
+    let mut subjects: Vec<String> = g
+        .brought_in(&merges[0])
+        .unwrap()
+        .iter()
+        .map(|sha| g.run(&["log", "-1", "--format=%s", sha]).unwrap().trim().to_string())
+        .collect();
+    subjects.sort();
+    // The direct push is on the first parent's side: not the MR's.
+    assert_eq!(subjects, ["add b", "add c"]);
+}

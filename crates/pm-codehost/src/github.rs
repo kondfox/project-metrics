@@ -7,18 +7,21 @@ use serde_json::{Value, json};
 
 use crate::http::{Http, Retry};
 use crate::{
-    Account, CodeHost, CodeHostError, FileChange, MergedPr, Query, Result, Review, Selection, Sink, parse_time,
+    Account, CodeHost, CodeHostError, FileChange, MergedPr, PrCommit, Query, Result, Review, Selection, Sink,
+    parse_time,
 };
 
 const PAGE: u32 = 25;
 
-const QUERY: &str = r#"query($owner: String!, $name: String!, $cursor: String, $order: IssueOrderField!, $files: Boolean!) {
+const QUERY: &str = r#"query($owner: String!, $name: String!, $cursor: String, $order: IssueOrderField!, $files: Boolean!, $commits: Boolean!) {
   repository(owner: $owner, name: $name) {
     pullRequests(states: MERGED, orderBy: {field: $order, direction: DESC}, first: PAGE, after: $cursor) {
       pageInfo { hasNextPage endCursor }
       nodes {
         number createdAt mergedAt updatedAt additions deletions
         author { login __typename ... on User { name } }
+        mergeCommit { oid }
+        commits(first: 100) @include(if: $commits) { nodes { commit { oid messageHeadline authoredDate author { email } } } }
         files(first: 100) @include(if: $files) { nodes { path additions } }
         reviews(first: 100) { nodes { author { login __typename ... on User { name } } submittedAt } }
       }
@@ -98,6 +101,25 @@ fn pr(url: &str, n: &Value) -> Result<Option<MergedPr>> {
             })
             .collect()
     });
+    let commits = if n["commits"].is_null() {
+        None
+    } else {
+        let mut out = Vec::new();
+        for c in items(&n["commits"]) {
+            let c = &c["commit"];
+            let Some(sha) = c["oid"].as_str() else { continue };
+            out.push(PrCommit {
+                sha: sha.to_string(),
+                subject: c["messageHeadline"].as_str().unwrap_or_default().to_string(),
+                author_email: c["author"]["email"]
+                    .as_str()
+                    .filter(|e| !e.is_empty())
+                    .map(String::from),
+                authored_at: c["authoredDate"].as_str().map(|t| parse_time(url, t)).transpose()?,
+            });
+        }
+        Some(out)
+    };
     Ok(Some(MergedPr {
         id: format!("#{}", number(&n["number"]).unwrap_or(0)),
         author: account(&n["author"]),
@@ -108,6 +130,8 @@ fn pr(url: &str, n: &Value) -> Result<Option<MergedPr>> {
         deletions: number(&n["deletions"]),
         files,
         reviews,
+        landed: n["mergeCommit"]["oid"].as_str().map(String::from).into_iter().collect(),
+        commits,
     }))
 }
 
@@ -139,7 +163,8 @@ impl CodeHost for GitHub {
         loop {
             let body = json!({
                 "query": query,
-                "variables": {"owner": owner, "name": name, "cursor": cursor, "order": order, "files": q.files},
+                "variables": {"owner": owner, "name": name, "cursor": cursor, "order": order, "files": q.files,
+                              "commits": q.commits},
             })
             .to_string();
             let res = self.retry.run(&self.endpoint, || {
@@ -224,6 +249,7 @@ mod tests {
             selection: Selection::UpdatedSince,
             until: None,
             files: false,
+            commits: false,
         };
         gh.merged_prs(&q, &mut sink).unwrap();
         let ids: Vec<&str> = sink.prs.iter().map(|p| p.id.as_str()).collect();
@@ -233,6 +259,47 @@ mod tests {
         assert_eq!(sink.prs[0].additions, Some(10));
         assert!(http.saw_header("Authorization", "bearer tok"));
         assert_eq!(http.urls()[0], "https://api.github.com/graphql");
+    }
+
+    #[test]
+    fn reads_commits_and_the_merge_commit() {
+        let mut n = node(5, "2025-02-04T10:00:00Z", json!([]));
+        n["mergeCommit"] = json!({"oid": "m5"});
+        n["commits"] = json!({"nodes": [
+            {"commit": {"oid": "c1", "messageHeadline": "add form", "authoredDate": "2025-02-03T09:10:00+01:00",
+                        "author": {"email": "ann@work.example"}}},
+            {"commit": {"oid": "c2", "messageHeadline": "review fixes", "authoredDate": "2025-02-03T15:00:00Z",
+                        "author": {"email": null}}}]});
+        let http = FakeHttp::default().with_post(
+            "\"commits\":true",
+            json!({"data": {"repository": {"pullRequests": {
+                "pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": [n]}}}}),
+        );
+        let gh = GitHub::new(None, "tok".into(), Arc::new(http));
+        let mut sink = Collect::default();
+        let q = Query {
+            project: "acme/shop",
+            since: "2025-01-01T00:00:00Z".parse().unwrap(),
+            selection: Selection::UpdatedSince,
+            until: None,
+            files: false,
+            commits: true,
+        };
+        gh.merged_prs(&q, &mut sink).unwrap();
+        let p = &sink.prs[0];
+        assert_eq!(p.landed, ["m5"]);
+        let c = p.commits.as_ref().unwrap();
+        assert_eq!((c[0].sha.as_str(), c[0].subject.as_str()), ("c1", "add form"));
+        assert_eq!(c[0].author_email.as_deref(), Some("ann@work.example"));
+        assert_eq!(c[1].author_email, None);
+        // Not asked for: not fetched, not an empty list.
+        assert_eq!(
+            pr("x", &node(6, "2025-02-04T10:00:00Z", json!([])))
+                .unwrap()
+                .unwrap()
+                .commits,
+            None
+        );
     }
 
     #[test]
@@ -248,6 +315,7 @@ mod tests {
             selection: Selection::UpdatedSince,
             until: None,
             files: true,
+            commits: false,
         };
         let err = gh.merged_prs(&q, &mut Collect::default()).unwrap_err();
         assert!(err.to_string().contains("Could not resolve"), "{err}");

@@ -725,6 +725,8 @@ pub fn pull_requests_variant(as_of: NaiveDate, v: &Variant) -> BTreeMap<String, 
                     deletions: Some(rng.below(additions)),
                     files: None,
                     reviews,
+                    landed: Vec::new(),
+                    commits: None,
                 });
                 number += 1;
             }

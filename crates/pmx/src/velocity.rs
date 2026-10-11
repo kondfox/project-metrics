@@ -162,9 +162,11 @@ struct RepoCommit {
 /// Commits grouped into one work package (spec §4.1).
 #[derive(Clone, Debug)]
 pub struct WorkPackage {
-    /// Ticket id, or `<person>~<ISO week>`.
+    /// Ticket id, `<repo>#<n>` / `<repo>!<n>` for a PR, or `<person>~<ISO week>`.
     pub id: String,
     pub ticket: Option<String>,
+    /// The PR of a PR package.
+    pub pr: Option<String>,
     /// The person of an author-week package.
     pub author: Option<String>,
     /// Oldest first.
@@ -172,6 +174,20 @@ pub struct WorkPackage {
 }
 
 impl WorkPackage {
+    /// Other ids the same author-week package can have: `<git author name>~<week>` for each raw
+    /// author name of its commits, as tools that group by git name (the prototype) write them.
+    /// Empty for a ticket package.
+    pub fn aliases(&self) -> std::collections::BTreeSet<String> {
+        let Some(week) = self.author.as_ref().and(self.id.rsplit_once('~')).map(|(_, w)| w) else {
+            return Default::default();
+        };
+        self.commits
+            .iter()
+            .map(|c| format!("{}~{week}", c.commit.author_name))
+            .filter(|a| *a != self.id)
+            .collect()
+    }
+
     pub fn date(&self) -> NaiveDate {
         self.commits
             .iter()
@@ -197,20 +213,197 @@ pub fn iso_week(d: NaiveDate) -> String {
     format!("{}-W{:02}", w.year(), w.week())
 }
 
-fn group(commits: Vec<RepoCommit>) -> Vec<WorkPackage> {
-    let mut by_id: BTreeMap<String, WorkPackage> = BTreeMap::new();
-    for c in commits {
-        let ticket = ticket_of(&c.commit.message);
-        let id = match &ticket {
-            Some(t) => t.clone(),
-            None => format!("{}~{}", c.person, iso_week(c.commit.author_date)),
+/// Which merged PR each commit belongs to, per repo (spec §4 rule 2).
+#[derive(Default)]
+pub struct PrIndex {
+    repos: BTreeMap<String, RepoPrIndex>,
+    /// GitHub squash subjects end in `(#n)`: they name their PR even without code-host data.
+    github: bool,
+    /// Repos with a code host but no PR data: grouped by ticket and author-week only.
+    pub missing: Vec<String>,
+}
+
+#[derive(Default)]
+struct RepoPrIndex {
+    /// Commit or landed (merge, squash) SHA → PR id.
+    by_sha: BTreeMap<String, String>,
+    /// Landed SHA → PR id: a merge commit with one of these brought that PR's commits in.
+    landed: BTreeMap<String, String>,
+    /// (author email, subject) → (authored date, PR id) of PR commits: rebased PRs land with new
+    /// SHAs but keep these.
+    by_commit: BTreeMap<(String, String), Vec<(NaiveDate, String)>>,
+}
+
+/// `See merge request <path>!<n>` in a GitLab merge commit's message.
+fn gitlab_mr(message: &str) -> Option<(String, u64)> {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"See merge request (\S+)!(\d+)").expect("valid regex"));
+    let m = re.captures(message)?;
+    Some((m[1].to_string(), m[2].parse().ok()?))
+}
+
+/// `Merge pull request #<n> from …` in a GitHub merge commit's subject.
+fn github_pr(message: &str) -> Option<u64> {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"^Merge pull request #(\d+) from ").expect("valid regex"));
+    re.captures(message.lines().next()?)?[1].parse().ok()
+}
+
+/// Is the merge's source a long-lived branch (`develop` into `main`, `main` into a feature, …)?
+/// Such a merge carries whatever was pushed there, not one change.
+fn from_long_lived_branch(message: &str) -> bool {
+    static SOURCE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static LONG: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let source = SOURCE.get_or_init(|| {
+        Regex::new(r"^Merge (?:remote-tracking )?branch '([^']+)'|^Merge pull request #\d+ from [^/\s]+/(\S+)")
+            .expect("valid regex")
+    });
+    let long = LONG.get_or_init(|| {
+        Regex::new(r"^(?:origin/)?(?:develop|dev|main|master|staging|production|release.*)$").expect("valid regex")
+    });
+    let subject = message.lines().next().unwrap_or("");
+    source
+        .captures(subject)
+        .and_then(|c| c.get(1).or(c.get(2)))
+        .is_some_and(|b| long.is_match(b.as_str()))
+}
+
+fn squash_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\(#(\d+)\)\s*$").expect("valid regex"))
+}
+
+impl PrIndex {
+    pub fn new(ws: &Workspace, repos: &[crate::pulls::RepoPrs], missing: Vec<String>) -> PrIndex {
+        let mut out = PrIndex {
+            github: ws
+                .config
+                .code_host
+                .as_ref()
+                .is_some_and(|h| h.kind == pm_config::CodeHostKind::Github),
+            missing,
+            ..Default::default()
         };
-        let author = ticket.is_none().then(|| c.person.clone());
+        for r in repos {
+            let idx = out.repos.entry(r.repo.clone()).or_default();
+            for pr in &r.prs {
+                for sha in &pr.landed {
+                    idx.by_sha.insert(sha.clone(), pr.id.clone());
+                    idx.landed.insert(sha.clone(), pr.id.clone());
+                }
+                for c in pr.commits.iter().flatten() {
+                    idx.by_sha.entry(c.sha.clone()).or_insert_with(|| pr.id.clone());
+                    if let (Some(email), Some(at)) = (&c.author_email, c.authored_at) {
+                        idx.by_commit
+                            .entry((email.trim().to_lowercase(), c.subject.trim().to_string()))
+                            .or_default()
+                            .push((at.date_naive(), pr.id.clone()));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Fill in what the host's commit lists miss from git (spec §4 rule 2.2): a merge commit whose
+    /// SHA is a PR's landed SHA, or whose message names a PR, owns the commits it brought in. Oldest
+    /// merge first, so a commit goes to the earliest; merges from long-lived branches are skipped.
+    pub fn add_merges(&mut self, repos: &[VelocityRepo], since: NaiveDate) -> Result<()> {
+        for r in repos {
+            let git = Git::open(&r.dir);
+            let range = LogRange::new(&r.tip).committed_since(since);
+            let merges = git
+                .merges(&range)
+                .with_context(|| format!("repo `{}`: git log --merges", r.name))?;
+            let idx = self.repos.entry(r.name.clone()).or_default();
+            // The project's own path, as its merge messages name it (a moved repo's older merges
+            // name the old one).
+            let own_path = merges
+                .iter()
+                .filter(|m| idx.landed.contains_key(&m.sha))
+                .find_map(|m| gitlab_mr(&m.message).map(|(path, _)| path));
+            for m in &merges {
+                if from_long_lived_branch(&m.message) {
+                    continue;
+                }
+                let id = match idx.landed.get(&m.sha) {
+                    Some(id) => id.clone(),
+                    None => match (gitlab_mr(&m.message), github_pr(&m.message)) {
+                        (Some((path, n)), _) if own_path.as_deref().is_none_or(|p| p == path) => format!("!{n}"),
+                        (Some((path, n)), _) => format!(":{path}!{n}"),
+                        (None, Some(n)) => format!("#{n}"),
+                        (None, None) => continue,
+                    },
+                };
+                for sha in git
+                    .brought_in(m)
+                    .with_context(|| format!("repo `{}`: commits of merge {}", r.name, m.sha))?
+                {
+                    idx.by_sha.entry(sha).or_insert_with(|| id.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The PR package id (`<repo>#<n>`, `<repo>!<n>`) of a commit, if it belongs to a merged PR.
+    fn pr_of(&self, repo: &str, c: &Commit) -> Option<String> {
+        let subject = c.message.lines().next().unwrap_or("").trim();
+        let found = self.repos.get(repo).and_then(|idx| {
+            idx.by_sha.get(&c.sha).cloned().or_else(|| {
+                let key = (c.author_email.trim().to_lowercase(), subject.to_string());
+                idx.by_commit.get(&key).and_then(|v| {
+                    v.iter()
+                        .find(|(d, _)| (*d - c.author_date).num_days().abs() <= 1)
+                        .map(|(_, id)| id.clone())
+                })
+            })
+        });
+        let found = found.or_else(|| {
+            self.github
+                .then(|| squash_re().captures(subject).map(|m| format!("#{}", &m[1])))
+                .flatten()
+        });
+        found.map(|id| format!("{repo}{id}"))
+    }
+}
+
+/// The first matching rule decides a commit's package (spec §4): its ticket; else the ticket of its
+/// PR when the PR's ticketed commits name exactly one; else its PR; else author-week.
+fn group(commits: Vec<RepoCommit>, repos: &[VelocityRepo], prs: &PrIndex) -> Vec<WorkPackage> {
+    let keyed: Vec<(Option<String>, Option<String>)> = commits
+        .iter()
+        .map(|c| (ticket_of(&c.commit.message), prs.pr_of(&repos[c.repo].name, &c.commit)))
+        .collect();
+    let mut pr_tickets: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for (ticket, pr) in &keyed {
+        if let (Some(t), Some(pr)) = (ticket, pr) {
+            pr_tickets.entry(pr.as_str()).or_default().insert(t.as_str());
+        }
+    }
+    let mut by_id: BTreeMap<String, WorkPackage> = BTreeMap::new();
+    for (c, (ticket, pr)) in commits.into_iter().zip(&keyed) {
+        let ticket = ticket.clone().or_else(|| {
+            let ts = pr_tickets.get(pr.as_deref()?)?;
+            (ts.len() == 1)
+                .then(|| ts.iter().next().map(|t| t.to_string()))
+                .flatten()
+        });
+        let (id, pr, author) = match (&ticket, pr) {
+            (Some(t), _) => (t.clone(), None, None),
+            (None, Some(pr)) => (pr.clone(), Some(pr.clone()), None),
+            (None, None) => (
+                format!("{}~{}", c.person, iso_week(c.commit.author_date)),
+                None,
+                Some(c.person.clone()),
+            ),
+        };
         by_id
             .entry(id.clone())
             .or_insert_with(|| WorkPackage {
                 id,
-                ticket,
+                ticket: ticket.clone(),
+                pr,
                 author,
                 commits: Vec::new(),
             })
@@ -368,8 +561,8 @@ fn prepare(p: &WorkPackage, repos: &[VelocityRepo], gits: &[Git], cls: &Classifi
                    "role": f.role, "added": f.added, "deleted": f.deleted})
         })
         .collect();
-    // Names stay out of the state: the id goes only for a ticket.
-    let state = json!({
+    // Names stay out of the state: the id goes only for a ticket or a PR.
+    let mut state = json!({
         "ticket": p.ticket,
         "repos": repo_names,
         "n_commits": p.commits.len(),
@@ -382,6 +575,10 @@ fn prepare(p: &WorkPackage, repos: &[VelocityRepo], gits: &[Git], cls: &Classifi
         "truncated": truncated,
         "diff": diff,
     });
+    // Only PR packages carry the key, so other packages' states (and cached answers) are unchanged.
+    if let Some(pr) = &p.pr {
+        state["pr"] = json!(pr);
+    }
     let first = subjects.first().copied().unwrap_or("");
     Ok(Prepared {
         state: serde_json::to_string_pretty(&state)?,
@@ -528,6 +725,7 @@ pub fn cached_answer(cache: &Cache, key: &str, classifier: &str) -> Result<Optio
 pub fn read_packages(
     s: &VelocitySettings,
     repos: &[VelocityRepo],
+    prs: &PrIndex,
     since: NaiveDate,
 ) -> Result<(Vec<WorkPackage>, Vec<Git>)> {
     let gits: Vec<Git> = repos.iter().map(|r| Git::open(&r.dir)).collect();
@@ -552,7 +750,7 @@ pub fn read_packages(
             });
         }
     }
-    Ok((group(commits), gits))
+    Ok((group(commits, repos, prs), gits))
 }
 
 /// Prepare one package for its classifier (`None`: no classifier for its repos).
@@ -602,7 +800,7 @@ struct Job {
 }
 
 /// Read, group, prepare and classify. `Ok(None)` = not measured (no classifier configured).
-pub fn run_stage(s: &VelocitySettings, repos: &[VelocityRepo]) -> Result<Option<VelocityDetail>> {
+pub fn run_stage(s: &VelocitySettings, repos: &[VelocityRepo], mut prs: PrIndex) -> Result<Option<VelocityDetail>> {
     let p = &s.progress;
     if !configured(s.ws) {
         return Ok(None);
@@ -621,7 +819,21 @@ pub fn run_stage(s: &VelocitySettings, repos: &[VelocityRepo]) -> Result<Option<
         }
     }
 
-    let (packages, gits) = read_packages(s, repos, since)?;
+    if !prs.missing.is_empty() {
+        p.warn(format!(
+            "no PR data for {}: their commits without a ticket id are grouped by author-week{}",
+            prs.missing.join(", "),
+            if prs.github {
+                " (or by a `(#n)` squash subject)"
+            } else {
+                ""
+            }
+        ));
+    }
+    p.detail(VELOCITY, "reading merges".to_string());
+    prs.add_merges(repos, since)?;
+    let prs = &prs;
+    let (packages, gits) = read_packages(s, repos, prs, since)?;
     p.plan(VELOCITY, packages.len() as u64, 0, false);
     let cache = if s.use_cache {
         Some(Cache::open(&s.ws.state_dir().join("cache.sqlite"))?)
@@ -742,7 +954,15 @@ pub fn run_stage(s: &VelocitySettings, repos: &[VelocityRepo]) -> Result<Option<
             "{refused} package(s) touch a local-only repo but their classifier is not local: not scored"
         ));
     }
-    let health = health(&rows);
+    let mut health = health(&rows);
+    for wp in &packages {
+        match (&wp.ticket, &wp.pr) {
+            (Some(_), _) => health.by_ticket += 1,
+            (None, Some(_)) => health.by_pr += 1,
+            (None, None) => health.by_author_week += 1,
+        }
+    }
+    health.no_pr_data = prs.missing.clone();
     if health.unscored > 0 {
         p.warn(format!(
             "{} of {} work packages not scored: Velocity is empty for the weeks and months that hold them (run collect again to retry)",
@@ -797,6 +1017,7 @@ fn health(rows: &[Package]) -> VelocityHealth {
         unscored: rows.iter().filter(|r| r.points.is_none()).count() as u32,
         escalated: rows.iter().filter(|r| r.escalated).count() as u32,
         low_confidence: rows.iter().filter(|r| r.low_confidence).count() as u32,
+        ..Default::default()
     }
 }
 
@@ -830,6 +1051,262 @@ pub fn smoke_test(ws: &Workspace, name: &str) -> Result<(pm_llm::Axes, Response,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rc(sha: &str, who: &str, date: &str, subject: &str) -> RepoCommit {
+        RepoCommit {
+            repo: 0,
+            person: who.into(),
+            commit: Commit {
+                sha: sha.into(),
+                author_email: format!("{}@work.example", who.to_lowercase()),
+                author_name: who.into(),
+                author_date: NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
+                message: subject.into(),
+                files: Vec::new(),
+            },
+        }
+    }
+
+    fn repo() -> VelocityRepo {
+        VelocityRepo {
+            name: "api".into(),
+            dir: PathBuf::new(),
+            tip: String::new(),
+            role: RepoRole::Fixed(pm_classify::Role::Backend),
+            classifier: None,
+            local_only: false,
+        }
+    }
+
+    fn index(github: bool, prs: &[(&str, &[&str])], rebased: &[(&str, &str, &str, &str)]) -> PrIndex {
+        let mut idx = RepoPrIndex::default();
+        for (id, shas) in prs {
+            for sha in *shas {
+                idx.by_sha.insert(sha.to_string(), id.to_string());
+            }
+        }
+        for (id, email, subject, date) in rebased {
+            idx.by_commit
+                .entry((email.to_string(), subject.to_string()))
+                .or_default()
+                .push((NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(), id.to_string()));
+        }
+        PrIndex {
+            repos: [("api".to_string(), idx)].into(),
+            github,
+            missing: Vec::new(),
+        }
+    }
+
+    fn ids(ps: &[WorkPackage]) -> Vec<(String, Vec<String>)> {
+        ps.iter()
+            .map(|p| {
+                let mut shas: Vec<String> = p.commits.iter().map(|c| c.commit.sha.clone()).collect();
+                shas.sort();
+                (p.id.clone(), shas)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn first_matching_rule_groups_each_commit() {
+        let prs = index(
+            false,
+            &[
+                ("#1", &["a1", "a2"]),
+                ("#2", &["b1", "b2", "b3"]),
+                ("#3", &["c1"]),
+                ("#4", &["s4"]),
+            ],
+            &[("#5", "jane@work.example", "tidy errors", "2026-03-04")],
+        );
+        let commits = vec![
+            // #1: one ticket, so its untagged commit joins SHOP-1.
+            rc("a1", "Jane", "2026-03-02", "SHOP-1 add form"),
+            rc("a2", "Jane", "2026-03-02", "review fixes"),
+            // #2 names two tickets: its untagged commit stays the PR's.
+            rc("b1", "Bob", "2026-03-03", "SHOP-2 api"),
+            rc("b2", "Bob", "2026-03-03", "SHOP-3 ui"),
+            rc("b3", "Bob", "2026-03-03", "fix lint"),
+            // #3 has no ticket at all.
+            rc("c1", "Bob", "2026-03-03", "bump timeout"),
+            // Squashed: the landed commit is the PR's.
+            rc("s4", "Jane", "2026-03-04", "new export"),
+            // Rebased: a new SHA, same author, subject and (within a day) date.
+            rc("r5", "Jane", "2026-03-05", "tidy errors"),
+            // Nothing matches: author-week.
+            rc("x1", "Jane", "2026-03-05", "notes"),
+        ];
+        let got = ids(&group(commits, &[repo()], &prs));
+        let want: Vec<(String, Vec<String>)> = [
+            ("Jane~2026-W10", vec!["x1"]),
+            ("SHOP-1", vec!["a1", "a2"]),
+            ("SHOP-2", vec!["b1"]),
+            ("SHOP-3", vec!["b2"]),
+            ("api#2", vec!["b3"]),
+            ("api#3", vec!["c1"]),
+            ("api#4", vec!["s4"]),
+            ("api#5", vec!["r5"]),
+        ]
+        .into_iter()
+        .map(|(id, shas)| (id.to_string(), shas.into_iter().map(String::from).collect()))
+        .collect();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn merge_messages() {
+        assert_eq!(
+            gitlab_mr("Merge branch 'f' into 'main'\n\nCloses #4\n\nSee merge request acme/shop!12"),
+            Some(("acme/shop".into(), 12))
+        );
+        assert_eq!(
+            github_pr("Merge pull request #87 from acme/feature-x\n\nAdd export"),
+            Some(87)
+        );
+        assert_eq!(github_pr("Revert \"Merge pull request #87 from acme/x\""), None);
+        assert!(from_long_lived_branch("Merge branch 'develop' into 'main'"));
+        assert!(from_long_lived_branch("Merge branch 'release/2.1' into 'main'"));
+        assert!(from_long_lived_branch("Merge pull request #9 from acme/develop"));
+        assert!(from_long_lived_branch(
+            "Merge remote-tracking branch 'origin/main' into feature"
+        ));
+        assert!(!from_long_lived_branch("Merge branch 'feature/devops' into 'develop'"));
+        assert!(!from_long_lived_branch("Merge pull request #9 from acme/maintenance"));
+    }
+
+    /// A scripted repo: `sh` runs git with fixed identities and dates.
+    fn scripted(dir: &std::path::Path, steps: &[(&str, &[&str])]) {
+        for (date, args) in steps {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(["-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main"])
+                .args(*args)
+                .env("GIT_AUTHOR_NAME", "Jane")
+                .env("GIT_AUTHOR_EMAIL", "jane@work.example")
+                .env("GIT_COMMITTER_NAME", "Jane")
+                .env("GIT_COMMITTER_EMAIL", "jane@work.example")
+                .env("GIT_AUTHOR_DATE", format!("{date}T12:00:00Z"))
+                .env("GIT_COMMITTER_DATE", format!("{date}T12:00:00Z"))
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+
+    #[test]
+    fn merges_fill_in_what_the_host_did_not_list() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let c = |name: &'static str| -> [&'static str; 4] { ["commit", "-q", "--allow-empty", name] };
+        let m = |msg: &'static str, branch: &'static str| -> Vec<&'static str> {
+            vec!["merge", "-q", "--no-ff", branch, "-m", msg]
+        };
+        let steps: Vec<(&str, Vec<&str>)> = vec![
+            ("2026-03-01", vec!["init", "-q"]),
+            ("2026-03-01", c("-minit").to_vec()),
+            ("2026-03-01", vec!["checkout", "-q", "-b", "develop"]),
+            // An MR whose host commit list came back empty: its merge SHA is known.
+            ("2026-03-02", vec!["checkout", "-q", "-b", "f1"]),
+            ("2026-03-02", c("-mlisted nowhere").to_vec()),
+            ("2026-03-02", c("-mlisted by the host").to_vec()),
+            ("2026-03-03", vec!["checkout", "-q", "develop"]),
+            (
+                "2026-03-03",
+                m(
+                    "Merge branch 'f1' into 'develop'\n\nSee merge request acme/shop!5",
+                    "f1",
+                ),
+            ),
+            // An older MR of the project the repo moved from: named only in its message.
+            ("2026-03-04", vec!["checkout", "-q", "-b", "f2"]),
+            ("2026-03-04", c("-mold project work").to_vec()),
+            ("2026-03-05", vec!["checkout", "-q", "develop"]),
+            (
+                "2026-03-05",
+                m(
+                    "Merge branch 'f2' into 'develop'\n\nSee merge request legacy/shop!40",
+                    "f2",
+                ),
+            ),
+            // A direct push to develop, then a release merge: never the release's package.
+            ("2026-03-06", c("-mdirect push").to_vec()),
+            ("2026-03-07", vec!["checkout", "-q", "main"]),
+            (
+                "2026-03-07",
+                m(
+                    "Merge branch 'develop' into 'main'\n\nSee merge request acme/shop!6",
+                    "develop",
+                ),
+            ),
+        ];
+        for (date, args) in &steps {
+            scripted(dir, &[(date, args.as_slice())]);
+        }
+        let git = Git::open(dir);
+        let sha_of = |subject: &str| {
+            git.run(&["log", "--all", "--format=%H", &format!("--grep=^{subject}$")])
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+        let merge5 = git
+            .run(&["log", "--all", "--merges", "--format=%H", "--grep=acme/shop!5"])
+            .unwrap();
+        let mut prs = PrIndex::default();
+        let idx = prs.repos.entry("api".into()).or_default();
+        idx.landed.insert(merge5.trim().to_string(), "!5".into());
+        // The host listed this one under another MR: a host list wins over git.
+        idx.by_sha.insert(sha_of("listed by the host"), "!99".into());
+        let mut r = repo();
+        r.dir = dir.to_path_buf();
+        r.tip = "main".into();
+        prs.add_merges(&[r], NaiveDate::from_ymd_opt(2026, 1, 1).unwrap())
+            .unwrap();
+        let idx = &prs.repos["api"];
+        assert_eq!(
+            idx.by_sha.get(&sha_of("listed nowhere")).map(String::as_str),
+            Some("!5")
+        );
+        assert_eq!(
+            idx.by_sha.get(&sha_of("old project work")).map(String::as_str),
+            Some(":legacy/shop!40")
+        );
+        assert_eq!(
+            idx.by_sha.get(&sha_of("listed by the host")).map(String::as_str),
+            Some("!99")
+        );
+        // Only the skipped release merge brought it into main.
+        assert_eq!(idx.by_sha.get(&sha_of("direct push")), None);
+        assert_eq!(idx.by_sha.get(&sha_of("init")), None, "before any merge");
+    }
+
+    #[test]
+    fn rebased_commits_match_within_a_day_only() {
+        let prs = index(false, &[], &[("#7", "jane@work.example", "tidy", "2026-03-04")]);
+        let near = group(vec![rc("n", "Jane", "2026-03-05", "tidy")], &[repo()], &prs);
+        assert_eq!(near[0].id, "api#7");
+        let far = group(vec![rc("f", "Jane", "2026-03-07", "tidy")], &[repo()], &prs);
+        assert_eq!(far[0].id, "Jane~2026-W10");
+    }
+
+    #[test]
+    fn github_squash_subjects_name_their_pr_without_data() {
+        let c = || vec![rc("q", "Jane", "2026-03-05", "Add CSV export (#87)")];
+        let gh = PrIndex {
+            github: true,
+            ..Default::default()
+        };
+        let p = group(c(), &[repo()], &gh);
+        assert_eq!((p[0].id.as_str(), p[0].pr.as_deref()), ("api#87", Some("api#87")));
+        // GitLab subjects carry no such marker: author-week.
+        assert_eq!(group(c(), &[repo()], &PrIndex::default())[0].id, "Jane~2026-W10");
+    }
 
     #[test]
     fn tickets_and_weeks() {

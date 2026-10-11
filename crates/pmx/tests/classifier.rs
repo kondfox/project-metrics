@@ -7,7 +7,7 @@ mod common;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use common::{BOB, JANE, Repo, d, lines};
+use common::{BOB, JANE, JANE_HOME, Repo, d, lines};
 use pm_config::Workspace;
 use pmx::{CollectOptions, collect};
 use serde_json::{Value, json};
@@ -227,4 +227,61 @@ fn eval_compares_with_the_reference() {
     // The first run reads the cache; the retest never does.
     pmx::eval::eval(&ws, &refs, &opts).unwrap();
     assert_eq!(calls(&bin, "cand"), 9);
+}
+
+#[test]
+fn eval_matches_author_weeks_by_git_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let api = repo(root);
+    // No ticket: author-week packages. Bob is "Robert B." in [people]; Jane commits under two
+    // identities that [people] merges, in the same week.
+    api.write("src/e.ts", &lines("E", 0..20));
+    api.commit("2025-03-03", BOB, "tidy e");
+    api.write("src/f.ts", &lines("F", 0..20));
+    api.commit("2025-03-10", JANE, "tidy f");
+    api.write("src/g.ts", &lines("G", 0..20));
+    api.commit("2025-03-11", JANE_HOME, "tidy g");
+    let mut a = answers(1, 1.0);
+    a["confidence_source"] = json!("none");
+    let cand = script(&bin, "cand", &a, &[]);
+    std::fs::write(
+        root.join("pmx.toml"),
+        format!(
+            "{PROJECT}\n[people]\n\"Robert B.\" = [\"{}\"]\n\"Jane\" = [\"{}\", \"{}\"]\n\n\
+             [classifiers.cand]\nprovider = \"command\"\ncommand = [\"sh\", \"{cand}\"]\n",
+            BOB.1, JANE.1, JANE_HOME.1
+        ),
+    )
+    .unwrap();
+    let ws = Workspace::load(root).unwrap();
+    let reference = root.join("reference.csv");
+    std::fs::write(
+        &reference,
+        format!(
+            "project,id,R1,R2,R3,R4,R5,R6\n\
+             Fixture,{}~2025-W10,0,1,1,1,0,1\n\
+             Fixture,{}~2025-W11,0,1,1,1,0,1\n\
+             Fixture,{}~2025-W11,0,1,1,1,0,1\n",
+            BOB.0, JANE.0, JANE_HOME.0
+        ),
+    )
+    .unwrap();
+    let refs = pmx::eval::read_reference(&reference).unwrap();
+    let opts = pmx::eval::EvalOptions {
+        classifier: "cand".into(),
+        as_of: d("2025-03-31"),
+        runs: 1,
+        use_cache: false,
+    };
+    let r = pmx::eval::eval(&ws, &refs, &opts).unwrap();
+    // Bob's week matches under his git name; Jane's merged week compares with neither row.
+    assert_eq!(r.scored.len(), 1);
+    let mut missing = r.missing.clone();
+    missing.sort();
+    let mut want = vec![format!("{}~2025-W11", JANE.0), format!("{}~2025-W11", JANE_HOME.0)];
+    want.sort();
+    assert_eq!(missing, want);
 }

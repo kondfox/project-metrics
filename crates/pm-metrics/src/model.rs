@@ -90,6 +90,16 @@ pub struct VelocityHealth {
     pub escalated: u32,
     /// Kept below the confidence gate.
     pub low_confidence: u32,
+    /// Packages by grouping rule (spec §4): ticket, PR / MR, author-week.
+    #[serde(default)]
+    pub by_ticket: u32,
+    #[serde(default)]
+    pub by_pr: u32,
+    #[serde(default)]
+    pub by_author_week: u32,
+    /// Repos with a code host but no PR data: their untagged commits fell back to author-week.
+    #[serde(default)]
+    pub no_pr_data: Vec<String>,
 }
 
 /// The code-host data behind the PR-flow metrics.

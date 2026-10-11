@@ -10,6 +10,19 @@ import { formatDate } from "../lib/dates";
 import { formatNumber } from "../lib/format";
 import { useDashboard, useMeasured } from "../state/hooks";
 import { velocityNote } from "../metrics/velocity";
+import type { VelocityDetail } from "../data/types";
+
+/** How the packages were grouped (spec §4), and where PR data was missing. */
+function grouping(h: VelocityDetail["health"]): string {
+  const total = h.by_ticket + h.by_pr + h.by_author_week;
+  if (total === 0) return "";
+  const parts = ` Grouped: ${formatNumber(h.by_ticket)} by ticket, ${formatNumber(h.by_pr)} by PR / MR, ${formatNumber(h.by_author_week)} by author-week.`;
+  const missing =
+    h.no_pr_data.length > 0
+      ? ` No PR data for ${h.no_pr_data.join(", ")}: their untagged commits are grouped by author-week, which is coarser.`
+      : "";
+  return parts + missing;
+}
 
 /** Velocity: six-axis complexity points of delivered work packages per FTE-day (spec §4). */
 export function VelocitySection() {
@@ -35,8 +48,9 @@ export function VelocitySection() {
   return (
     <Section title="Velocity">
       <p>
-        Work packages (a ticket, else one person&apos;s untracked week) scored on the {v.rubric} rubric by{" "}
-        {v.classifiers.join(", ") || "no classifier yet"}; scored from {v.options.since}.
+        Work packages (a ticket, else a PR / MR, else one person&apos;s untracked week) scored on the{" "}
+        {v.rubric} rubric by {v.classifiers.join(", ") || "no classifier yet"}; scored from {v.options.since}.
+        {grouping(v.health)}
         {v.classifiers.length > 1 ? " Scores from different classifiers are not strictly comparable." : ""}
         {unscored > 0
           ? ` ${formatNumber(unscored)} package(s) in this range are not scored yet, so the range has no Velocity.`

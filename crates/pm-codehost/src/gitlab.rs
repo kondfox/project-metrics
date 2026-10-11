@@ -8,8 +8,8 @@ use serde_json::Value;
 
 use crate::http::{Http, Retry};
 use crate::{
-    Account, CodeHost, CodeHostError, FileChange, MergedPr, Query, Result, Review, Selection, Sink, format_since,
-    parse_time,
+    Account, CodeHost, CodeHostError, FileChange, MergedPr, PrCommit, Query, Result, Review, Selection, Sink,
+    format_since, parse_time,
 };
 
 pub struct GitLab {
@@ -55,7 +55,8 @@ impl GitLab {
     fn pages(&self, path: &str, mut each: impl FnMut(Vec<Value>) -> Result<()>) -> Result<()> {
         let mut page = "1".to_string();
         loop {
-            let (v, next) = self.get(&format!("{path}&per_page=100&page={page}"))?;
+            let sep = if path.contains('?') { '&' } else { '?' };
+            let (v, next) = self.get(&format!("{path}{sep}per_page=100&page={page}"))?;
             let Value::Array(items) = v else { break };
             if items.is_empty() {
                 break;
@@ -90,6 +91,25 @@ impl GitLab {
                         at: parse_time(&path, n["created_at"].as_str().unwrap_or_default())?,
                     });
                 }
+            }
+            Ok(())
+        })?;
+        Ok(out)
+    }
+
+    /// The MR's commits (`/commits`), for Velocity's PR packages.
+    fn commits(&self, pid: &str, iid: u64) -> Result<Vec<PrCommit>> {
+        let path = format!("/projects/{pid}/merge_requests/{iid}/commits");
+        let mut out = Vec::new();
+        self.pages(&path, |cs| {
+            for c in cs {
+                let Some(sha) = c["id"].as_str() else { continue };
+                out.push(PrCommit {
+                    sha: sha.to_string(),
+                    subject: c["title"].as_str().unwrap_or_default().to_string(),
+                    author_email: c["author_email"].as_str().filter(|e| !e.is_empty()).map(String::from),
+                    authored_at: c["authored_date"].as_str().map(|t| parse_time(&path, t)).transpose()?,
+                });
             }
             Ok(())
         })?;
@@ -146,6 +166,7 @@ fn project_segment(id: &str) -> String {
 
 struct Listed {
     iid: u64,
+    landed: Vec<String>,
     author: Option<Account>,
     created_at: String,
     merged_at: String,
@@ -185,6 +206,10 @@ impl CodeHost for GitLab {
                 }
                 todo.push(Listed {
                     iid,
+                    landed: ["merge_commit_sha", "squash_commit_sha"]
+                        .iter()
+                        .filter_map(|k| m[*k].as_str().filter(|s| !s.is_empty()).map(String::from))
+                        .collect(),
                     author: account(&m["author"]),
                     created_at: m["created_at"].as_str().unwrap_or_default().to_string(),
                     merged_at: merged.to_string(),
@@ -219,6 +244,12 @@ impl CodeHost for GitLab {
                                 deletions: None,
                                 files: if q.files { Some(self.files(&pid, l.iid)?) } else { None },
                                 reviews: self.reviews(&pid, l.iid)?,
+                                landed: l.landed.clone(),
+                                commits: if q.commits {
+                                    Some(self.commits(&pid, l.iid)?)
+                                } else {
+                                    None
+                                },
                             })
                         })();
                         match pr {
@@ -255,6 +286,43 @@ mod tests {
 
     fn since() -> chrono::DateTime<chrono::Utc> {
         "2025-01-01T00:00:00Z".parse().unwrap()
+    }
+
+    #[test]
+    fn fetches_commits_and_landed_shas_when_asked() {
+        let base = "https://gitlab.example.com/api/v4/projects/7/merge_requests";
+        let list = format!("{base}?state=merged&updated_after=2025-01-01T00:00:00Z&per_page=100");
+        let http = FakeHttp::default()
+            .with_json(
+                &format!("{list}&page=1"),
+                json!([{"iid": 4, "author": {"username": "ann"}, "created_at": "2025-02-03T09:00:00Z",
+                        "merged_at": "2025-02-04T10:00:00Z", "updated_at": "2025-02-04T10:00:00Z",
+                        "merge_commit_sha": "m4", "squash_commit_sha": "s4"}]),
+            )
+            .with_json(
+                &format!("{base}/4/notes?sort=asc&order_by=created_at&per_page=100&page=1"),
+                json!([]),
+            )
+            .with_json(
+                &format!("{base}/4/commits?per_page=100&page=1"),
+                json!([{"id": "c1", "title": "tidy form", "author_email": "ann@work.example",
+                        "authored_date": "2025-02-03T09:10:00.000+01:00"}]),
+            );
+        let mut sink = Collect::default();
+        let q = Query {
+            project: "7",
+            since: since(),
+            selection: Selection::UpdatedSince,
+            until: None,
+            files: false,
+            commits: true,
+        };
+        host(http).merged_prs(&q, &mut sink).unwrap();
+        let p = &sink.prs[0];
+        assert_eq!(p.landed, ["m4", "s4"]);
+        let c = p.commits.as_ref().unwrap();
+        assert_eq!((c[0].sha.as_str(), c[0].subject.as_str()), ("c1", "tidy form"));
+        assert!(c[0].authored_at.is_some());
     }
 
     #[test]
@@ -299,6 +367,7 @@ mod tests {
             selection: Selection::UpdatedSince,
             until: None,
             files: false,
+            commits: false,
         };
         host(http.clone()).merged_prs(&q, &mut sink).unwrap();
         assert_eq!((sink.listed, sink.skipped), (3, 1));
@@ -338,6 +407,7 @@ mod tests {
             selection: Selection::CreatedSince,
             until: None,
             files: true,
+            commits: false,
         };
         host(http).merged_prs(&q, &mut sink).unwrap();
         let files = sink.prs[0].files.clone().unwrap();
@@ -387,6 +457,7 @@ mod tests {
             selection: Selection::UpdatedSince,
             until: None,
             files: false,
+            commits: false,
         };
         host(http).merged_prs(&q, &mut sink).unwrap();
         assert_eq!((sink.0.prs.len(), sink.0.skipped), (0, 1));

@@ -280,7 +280,10 @@ pub fn eval(ws: &Workspace, reference: &[Reference], opts: &EvalOptions) -> Resu
         use_cache: opts.use_cache,
         progress: pm_progress::Progress::off(),
     };
-    let (packages, gits) = read_packages(&settings, &vrepos, config.project.range_start)?;
+    let stored = crate::pulls::stored(ws)?;
+    let mut prs = crate::velocity::PrIndex::new(ws, &stored.repos, stored.missing);
+    prs.add_merges(&vrepos, config.project.range_start)?;
+    let (packages, gits) = read_packages(&settings, &vrepos, &prs, config.project.range_start)?;
     let classifiers = Classifiers::build(config, [opts.classifier.as_str()]);
     let provider = classifiers.get(&opts.classifier).map_err(|e| anyhow!(e))?;
     let set = QuestionSet::six_axis();
@@ -291,11 +294,44 @@ pub fn eval(ws: &Workspace, reference: &[Reference], opts: &EvalOptions) -> Resu
         reference: wanted.len(),
         ..Default::default()
     };
-    let mut todo: Vec<(&Reference, Prepared, bool)> = Vec::new();
+    // Exact ids first. An author-week id that names a person by a raw git name (the prototype's
+    // ids; `[people]` may call them differently) matches through the package's aliases, unless
+    // several reference rows point at one package: `[people]` merged what the reference scored
+    // apart, so neither compares like for like.
+    let mut matched: Vec<(&Reference, &crate::velocity::WorkPackage)> = Vec::new();
     let mut found = std::collections::BTreeSet::new();
+    let mut by_alias: BTreeMap<String, Vec<&crate::velocity::WorkPackage>> = BTreeMap::new();
     for wp in &packages {
-        let Some(r) = wanted.get(wp.id.as_str()) else { continue };
-        found.insert(wp.id.clone());
+        match wanted.get(wp.id.as_str()) {
+            Some(r) => {
+                found.insert(wp.id.clone());
+                matched.push((r, wp));
+            }
+            None => {
+                for a in wp.aliases() {
+                    by_alias.entry(a).or_default().push(wp);
+                }
+            }
+        }
+    }
+    let mut alias_rows: BTreeMap<&str, Vec<&Reference>> = BTreeMap::new();
+    for (id, r) in &wanted {
+        if found.contains(*id) {
+            continue;
+        }
+        if let Some([wp]) = by_alias.get(*id).map(Vec::as_slice) {
+            alias_rows.entry(wp.id.as_str()).or_default().push(r);
+        }
+    }
+    for wp in &packages {
+        if let Some([r]) = alias_rows.get(wp.id.as_str()).map(Vec::as_slice) {
+            found.insert(r.id.clone());
+            matched.push((r, wp));
+        }
+    }
+
+    let mut todo: Vec<(&Reference, Prepared, bool)> = Vec::new();
+    for (r, wp) in matched {
         let (prepared, _, local_only) = prepare_package(wp, &vrepos, &gits, &cls)?;
         if local_only && !provider.local() {
             report.refused += 1;
