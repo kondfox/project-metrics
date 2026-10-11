@@ -611,6 +611,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pm-codehost"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "ureq",
+]
+
+[[package]]
 name = "pm-config"
 version = "0.1.0"
 dependencies = [
@@ -688,6 +699,7 @@ dependencies = [
  "dirs",
  "flate2",
  "pm-classify",
+ "pm-codehost",
  "pm-config",
  "pm-git",
  "pm-metrics",
@@ -711,6 +723,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "pm-classify",
+ "pm-codehost",
  "pm-config",
  "pm-git",
  "pm-metrics",

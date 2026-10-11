@@ -90,7 +90,10 @@ export function fixtureProject(over: Partial<ProjectFile["project"]> = {}): Proj
         "dependency_vulnerabilities",
         "secrets",
         "sast",
+        "peer_review",
+        "velocity",
       ],
+      pull_requests: null,
     },
   };
 }
@@ -134,5 +137,27 @@ export function fixtureWithSnapshots(): ProjectFile {
     top_packages: [{ name: "left-pad", version: "1.0.0", count: 3, max_severity: "critical" }],
     lockfiles: { "shop-api": ["package-lock.json"] },
   };
+  return p;
+}
+
+/** The fixture with PR flow from GitLab (no PR sizes). */
+export function fixtureWithPulls(): ProjectFile {
+  const p = fixtureProject();
+  const m = (a: number | null, b: number | null) => [a, b];
+  Object.assign(p.series_monthly, {
+    pr_count: m(14, 20),
+    pr_cycle_median_h: m(30.5, 22.25),
+    review_wait_median_h: m(4, null),
+    review_coverage_pct: m(85.7, 0),
+    mentoring_pairs: m(3, 0),
+  });
+  Object.assign(p.n_monthly, {
+    pr_cycle_median_h: m(14, 20),
+    review_wait_median_h: m(12, 0),
+    review_coverage_pct: m(14, 20),
+    mentoring_pairs: m(12, 0),
+  });
+  p.meta.not_measured = p.meta.not_measured.filter((x) => x !== "peer_review").concat("pr_size");
+  p.meta.pull_requests = { host: "gitlab", repos: ["shop-api", "shop-web"], sizes: false };
   return p;
 }

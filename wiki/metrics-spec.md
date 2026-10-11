@@ -70,6 +70,9 @@ Across a project's repos, **sum numerators and denominators**, then divide. Neve
 - Bots: config list + pattern `\[bot\]|dependabot|renovate|github-action|semantic-release|gitlab[ -]?ci|gitlab[ -]?runner|jenkins|buildkite|^claude$|anthropic`.
 - Bot rule detail: the pattern is matched case-insensitively against the trimmed author name and,
   separately, the email; the `bots` list matches either exactly (case-insensitive).
+- Code-host logins (§8, decided 2026-10-11) use the same rules on the login and the display name,
+  plus accounts the host marks as bots (GitHub `Bot`) and GitLab's service accounts:
+  `^(ghost|support-bot|alert-bot|project_bot)$` and `^(project|group)_<n>_bot…` (access-token bots).
 - Externals: per-project list of names and emails (`[people] externals`), case-insensitive exact match
   on the author name, the email, or the canonical person name (§10.1).
 - Identity unification: an alias map `email → canonical person` merges a person's multiple identities
@@ -257,7 +260,7 @@ is future work.
 - **Techs per dev** = mean count of technologies with ≥ 40 lines.
 - Drill-down "leaders": per person roles, techs, breadth, lines (lead-only view).
 
-Mentoring pairs (PR-based) are in §7.
+Mentoring pairs (PR-based) are in §8.
 
 ---
 
@@ -341,19 +344,34 @@ scannable lockfile.
 
 ## 8. Code-host (PR/MR) flow — "Peer review" fleet column + project panels
 
-Per merged PR/MR (bucketed by merge date), excluding bot authors:
-- **PR count**; **cycle time** = median hours `created → merged`;
-- **review wait** = median hours `created → first review` (reviewed PRs only; `null` if none);
-- **Peer review %** (fleet column) = PRs with ≥ 1 review by a non-author, non-bot human ÷ merged PRs.
-  *Review* = GitHub: a submitted review; GitLab: a non-system note by a non-author **or** an approval
-  system note ("approved this merge request").
-- **PR size** (GitHub only today) = median `additions + deletions`.
-- **Mentoring pairs** = reviewed PRs whose author is **not** an expert in the PR's stack while ≥ 1 reviewer
-  **is**. **⟂ unify vs prototype** (the GitHub and GitLab adapters define "expert" differently — lines vs MR
-  count). v1 rule: PR stack = repo role, or for a `per-file` repo the dominant role by added lines;
-  expert in stack S = ≥ 3 merged PRs in S **and** ≥ 25% of the top author's count in S.
-- **⟂ gap:** externals are not excluded in the prototype PR layer — apply §1.3 (requires the
-  login→person mapping in `[people]`, §10.1).
+Built in M4 (2026-10-11). Per merged PR/MR, bucketed by its **merge date** in the offset the host
+recorded (§1.1), for every repo with a `code_host_id`:
+- **Which PRs:** merged on or after `range_start` and on or before `as_of`, whenever they were opened.
+  **⟂ change vs prototype:** its GitLab adapter listed MRs *created* after `range_start`, so MRs
+  opened earlier and merged later were missing (its GitHub export was by merge date already).
+- **Who counts (§1.3):** PRs by bots or externals are left out of every metric below. A login maps
+  to a person through `[people]` (an unmapped login is its own person); its display name is matched
+  against `externals` and `bots` like a commit author's name. **⟂ gap closed:** the prototype counted
+  bots' and externals' PRs.
+- **Review** = GitHub: a submitted review; GitLab: a non-system note **or** an approval system note
+  ("approved this merge request"). It counts when the reviewer is not a bot and is a different
+  **person** from the author (the author's other logins don't count). Externals' reviews count: they
+  are peer review.
+- **PR count** (`pr_count`).
+- **Cycle time** = median hours `created → merged` (`n` = merged PRs).
+- **Review wait** = median hours `created → first review`, over reviewed PRs (`null` if none).
+- **Peer review %** (fleet column) = PRs with ≥ 1 review ÷ merged PRs.
+- **PR size** (GitHub only: GitLab's MR API has no line counts) = median `additions + deletions`.
+- **Mentoring pairs** = reviewed PRs whose author is **not** an expert in the PR's stack while ≥ 1
+  reviewer **is**. A count, so 0 (not `null`) in a bucket without reviewed PRs.
+  - **PR stack** = the repo's role; in a `per-file` repo, the role (§1.5) with the most added source
+    lines in the PR's files (first such role in file order on a tie; GitHub lists at most 100 files).
+  - **Expert in stack S** = ≥ 3 PRs merged in S **and** ≥ 25% of the top author's count in S, counted
+    over the PRs merged in the **365 days before the PR's merge date** (decided 2026-10-11).
+    **⟂ unify vs prototype:** GitHub used ≥ 500 added lines over the whole export, GitLab an MR count
+    over everything fetched, so earlier months moved whenever the export grew. A trailing window
+    fixes a PR's flag once it is merged.
+- Durations are computed from the timestamps to the millisecond; hours = seconds ÷ 3600.
 
 ---
 
@@ -388,7 +406,7 @@ setup commands: [tool-implementation-plan.md §3](tool-implementation-plan.md#3-
 | `role_rules` | Optional override of the per-file path hints (§1.5) |
 | `[people]` | **⟂ spec change 2026-10-09:** one table replaces `identity` + `usernames`. `"Canonical Name" = [emails…, code-host logins…]`, plus `bots = […]` and `externals = […]` (§1.3) |
 | `security_lockfiles` | Optional override; default = auto-discover every lockfile OSV-Scanner supports |
-| `[code_host]` `type`, `base`, `token_env` | Tokens only by env-var name, never inline |
+| `[code_host]` `type`, `base`, `token_env` | `github` or `gitlab`; `base` for GitLab (default gitlab.com) or GitHub Enterprise Server; tokens only by env-var name, never inline (default `GITHUB_TOKEN` / `GITLAB_TOKEN`), §10.4 |
 | `[fte]` | FTE provider (§10.2): `source = "static"` with `value` or dated `periods = [{from, to?, fte}]`, or `source = "file"` with `file` (the JSON below) |
 | `[[secrets_triage]]` | `repo, file, rule?, verdict (false-positive · rotated · accepted), by, date` |
 | `[snapshots]` | `cadence` (`weekly` · `monthly`), `sast_rules` (unset = bundled `pmx-sast@1`; semgrep rule files or folders; `"bundled"` adds the bundled set; `[]` = off), `since` (first date to scan), `jobs` (trees scanned at once, default 2), `enabled` |
@@ -431,13 +449,28 @@ schema for every provider. Design: [tool-implementation-plan.md §6](tool-implem
 - No classifier configured → Velocity is `null` (not 0).
 
 ### 10.4 Code-host adapter (PR/MR)
-- Interface: `merged_prs(repo, since) → [{ id, author_login, created_at, merged_at, additions?,
-  deletions?, files?[{path, additions}], reviews[{login, submitted_at}] }]`.
-- **GitHub:** REST/GraphQL with a token; reviews = submitted reviews. (Prototype read a manual `gh`
-  export, `pr.json`.)
-- **GitLab:** `/projects/:id/merge_requests?state=merged&created_after=` + per-MR `/notes`; reviews = non-author
-  non-system notes and approval system notes. Token from `code_host.token_env`.
-- Missing token/host → all §8 metrics `null` with "no code-host data".
+- Interface: `merged_prs(project, since, selection, until, files) → [{ id, author{login, name?, bot},
+  created_at, merged_at, updated_at?, additions?, deletions?, files?[{path, additions}],
+  reviews[{by{login, name?, bot}, at}] }]` (crate `pm-codehost`).
+- **GitHub:** GraphQL (`pullRequests(states: MERGED)`, newest update first) with a token
+  (`Authorization: bearer`); reviews = submitted reviews; `files` only for `per-file` repos. GitHub
+  Enterprise Server: `base` = the server URL (`<base>/api/graphql`). (Prototype read a manual `gh`
+  export, `pr.json`; pmx still reads that format for parity.)
+- **GitLab:** `/projects/:id/merge_requests?state=merged&updated_after=` + per-MR `/notes` (fetched
+  four at a time); reviews = non-system notes and approval system notes; `per-file` repos also read
+  `/diffs` (or `/changes` on GitLab < 15.7) for added lines per file. `base` defaults to
+  `https://gitlab.com`; the project id is numeric or a `group/project` path.
+- Token from `code_host.token_env` (default `GITHUB_TOKEN` / `GITLAB_TOKEN`), never in the file.
+- **Incremental:** PRs are stored one by one in `.pmx/cache.sqlite`. A run asks for PRs *updated*
+  since the previous complete fetch minus 24 h (merging and new reviews update a PR), and skips
+  listed PRs whose stored copy has the same `updated_at`. A run `--as-of` a past date skips PRs
+  merged after it and does not count as a fetch. Rate limits, 5xx and dropped connections are
+  retried with backoff (`Retry-After` honoured).
+- **Missing data:** no `[code_host]` or no `code_host_id` → all §8 metrics are left out and the
+  dashboard shows "not measured" (`meta.not_measured` has `peer_review`). A repo that can't be
+  fetched (no token, host down) uses its stored PRs with a warning; if it has none, the whole PR
+  layer is not measured, since partial counts would read as a drop. `meta.pull_requests` records the
+  host and the repos read.
 
 ### 10.5 External binaries
 | Tool | Used for | Version | If missing |
@@ -464,7 +497,9 @@ its end); `weeks[]`, `months[]` with precomputed `series_weekly` / `series_month
 {metric → [value|null]}` plus `n` (denominators) for the low-n flag; `detail{week|month → stack_mix,
 leaders}`; `ai_compare`; `security{date, top_packages, lockfiles}`; `hotspots[{repo, sha, since, files[]}]`; `velocity{packages[] scored, with date}`;
 `meta{generated_at, as_of, repo tip SHAs, partial_week, partial_month, tool versions, rules snapshot,
-rubric version, classifier per package, constituents present}`. Per-person drill-downs (leaders, per-person
+rubric version, classifier per package, constituents present, not_measured, pull_requests{host,
+repos, sizes}}`. A day's PR components (`pr{merged, cycle_ms[], reviewed, wait_ms[], sizes[],
+mentored}`, §8) hold no people, so custom ranges recompute the PR metrics too. Per-person drill-downs (leaders, per-person
 points) go to a separate `private/leads.json`, never into the shared file. The per-person day components
 in `days` (commits and lines per person, needed for multi-stack, active devs and commits per dev over any
 range) use **pseudonymous ids** (`p1`, `p2`, … by sorted name); the id → name map is only in
@@ -496,3 +531,7 @@ Values are unrounded; `null` means no data.
 | `secrets_high`, `secrets_low` | §7.2 | — |
 | `security_score` | §7.3 | — |
 | `sast_high`, `sast_medium`, `sast_low`, `sast_new`, `sast_fixed`, `sast_per_kloc`, `sast_kloc`, `suppressions` | §7.4 | — |
+| `pr_count` | §8; absent when not measured | — |
+| `pr_cycle_median_h`, `review_coverage_pct` | §8 | merged PRs |
+| `review_wait_median_h`, `mentoring_pairs` | §8 | reviewed PRs |
+| `pr_size_median` | §8; GitHub only | PRs with line counts |

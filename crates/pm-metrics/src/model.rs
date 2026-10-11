@@ -58,6 +58,20 @@ pub struct Meta {
     pub quality_constituents: Vec<String>,
     /// Inputs this version does not measure yet; shown as "not measured".
     pub not_measured: Vec<String>,
+    /// Where the PR-flow metrics came from; `None` = not measured (spec §8).
+    pub pull_requests: Option<PullsInfo>,
+}
+
+/// The code-host data behind the PR-flow metrics.
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PullsInfo {
+    /// `github` or `gitlab`.
+    pub host: String,
+    /// Repos whose PRs were read (those with a `code_host_id`).
+    pub repos: Vec<String>,
+    /// The host reports PR line counts (GitHub).
+    pub sizes: bool,
 }
 
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -158,6 +172,8 @@ pub struct BuildInput {
     pub tool_versions: BTreeMap<String, String>,
     pub dialect: String,
     pub snapshots: SnapshotInput,
+    /// Set when `days` include merged PRs (spec §8).
+    pub pulls: Option<PullsInfo>,
 }
 
 pub struct Series {
@@ -267,11 +283,14 @@ pub fn build(input: BuildInput) -> (ProjectFile, LeadsFile) {
         tool_versions,
         dialect,
         snapshots,
+        pulls,
     } = input;
     let opts = MetricOptions {
         breadth_roles: project.breadth_roles.clone(),
         ai_attribution: project.ai_attribution,
         mix_roles: mix_roles(&days),
+        pull_requests: pulls.is_some(),
+        pr_size: pulls.as_ref().is_some_and(|p| p.sizes),
     };
     let monthly = series(&days, &months(project.range_start, as_of), &opts, &snapshots, as_of);
     let weekly = series(&days, &weeks(project.range_start, as_of), &opts, &snapshots, as_of);
@@ -310,9 +329,15 @@ pub fn build(input: BuildInput) -> (ProjectFile, LeadsFile) {
         },
         not_measured: {
             let mut nm = snapshots.not_measured.clone();
-            nm.extend(["pull_requests".to_string(), "velocity".into()]);
+            match &pulls {
+                None => nm.push("peer_review".into()),
+                Some(p) if !p.sizes => nm.push("pr_size".into()),
+                Some(_) => {}
+            }
+            nm.push("velocity".into());
             nm
         },
+        pull_requests: pulls,
     };
     let leads = LeadsFile {
         schema: LEADS_SCHEMA.into(),
@@ -375,7 +400,7 @@ mod tests {
         let opts = MetricOptions {
             breadth_roles: vec![Role::Backend],
             ai_attribution: true,
-            mix_roles: vec![],
+            ..Default::default()
         };
         let buckets = months(d("2025-01-01"), d("2025-04-30"));
         let s = series(&Days::new(), &buckets, &opts, &snaps, d("2025-04-30"));

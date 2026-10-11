@@ -45,6 +45,7 @@ export function engineFrom(call: (request: unknown) => unknown, project: Project
     snapshots: project.snapshots,
     breadth_roles: project.project.breadth_roles,
     ai_attribution: project.project.ai_attribution,
+    pull_requests: project.meta.pull_requests,
   });
   return {
     range: (r) => call({ op: "range", start: formatDate(r.start), end: formatDate(r.end) }) as Metrics,

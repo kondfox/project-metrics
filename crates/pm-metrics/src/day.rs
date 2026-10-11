@@ -7,6 +7,8 @@ use chrono::NaiveDate;
 use pm_classify::Role;
 use serde::{Deserialize, Serialize};
 
+use crate::pr::PrDay;
+
 fn is_zero<T: Default + PartialEq>(x: &T) -> bool {
     *x == T::default()
 }
@@ -68,6 +70,9 @@ pub struct Day {
     pub person_commits: BTreeMap<String, u32>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub lines: Lines,
+    /// Merged pull requests (spec §8), by merge date.
+    #[serde(default, skip_serializing_if = "PrDay::is_empty")]
+    pub pr: PrDay,
 }
 
 pub type Days = BTreeMap<NaiveDate, Day>;
@@ -90,6 +95,7 @@ impl Day {
         self.ai.merge(&o.ai);
         self.rework_added += o.rework_added;
         self.reworked += o.reworked;
+        self.pr.merge(&o.pr);
         for (p, n) in &o.person_commits {
             *self.person_commits.entry(p.clone()).or_default() += n;
         }

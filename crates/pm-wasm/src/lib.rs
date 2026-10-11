@@ -6,7 +6,8 @@
 //! `ptr << 32 | len` (wasm32 pointers fit in 32 bits), which it releases with `pmx_free`.
 //!
 //! Requests:
-//! - `{"op": "load", "days": {…}, "breadth_roles": […], "ai_attribution": bool}` → `{"mix_roles": […]}`
+//! - `{"op": "load", "days": {…}, "snapshots": {…}, "breadth_roles": […], "ai_attribution": bool,
+//!   "pull_requests": meta.pull_requests}` → `{"mix_roles": […]}`
 //! - `{"op": "range", "start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}` →
 //!   `Metrics` (`{values, n, stack_mix, leaders}`; TypeScript type in crates/pmx/web/src/generated)
 //!
@@ -18,7 +19,7 @@ use chrono::NaiveDate;
 use pm_classify::Role;
 use std::collections::BTreeMap;
 
-use pm_metrics::model::mix_roles;
+use pm_metrics::model::{PullsInfo, mix_roles};
 use pm_metrics::snapshot::{SnapshotPoint, at_or_before};
 use pm_metrics::{Days, MetricOptions, aggregate, metrics};
 use serde::Deserialize;
@@ -43,6 +44,8 @@ enum Request {
         snapshots: BTreeMap<NaiveDate, SnapshotPoint>,
         breadth_roles: Vec<Role>,
         ai_attribution: bool,
+        #[serde(default)]
+        pull_requests: Option<PullsInfo>,
     },
     Range {
         start: NaiveDate,
@@ -59,6 +62,7 @@ pub fn handle(request: &str) -> String {
             snapshots,
             breadth_roles,
             ai_attribution,
+            pull_requests,
         }) => {
             let roles = mix_roles(&days);
             let reply = json!({ "mix_roles": roles });
@@ -68,6 +72,8 @@ pub fn handle(request: &str) -> String {
                         breadth_roles,
                         ai_attribution,
                         mix_roles: roles,
+                        pull_requests: pull_requests.is_some(),
+                        pr_size: pull_requests.is_some_and(|p| p.sizes),
                     },
                     days,
                     snapshots,

@@ -1,4 +1,5 @@
-//! `pmx collect` (plan §4, stages 1–4 and 8): plan → fetch → git ingest → rework walk → roll-up.
+//! `pmx collect` (plan §4): plan → fetch → git ingest → rework walk → snapshots and pull requests
+//! (concurrently) → roll-up.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -9,15 +10,17 @@ use std::time::Instant;
 use anyhow::{Context, Result, anyhow};
 use chrono::{Days as ChronoDays, NaiveDate};
 use pm_classify::{Classifier, TestRules};
+use pm_codehost::Selection;
 use pm_config::{Identity, RepoConfig, Workspace};
 use pm_git::{Dialect, Git, LogRange, ReworkCounts};
-use pm_metrics::model::{BuildInput, ProjectInfo, RepoInfo};
+use pm_metrics::model::{BuildInput, ProjectInfo, RepoInfo, SnapshotInput};
 use pm_metrics::{Days, LeadsFile, ProjectFile, merge_days};
 use pm_progress::{Progress, fmt_n};
 use sha2::{Digest, Sha256};
 
 use crate::cache::Cache;
 use crate::ingest::{IngestContext, RepoIngest, add_rework, ingest, splice_rework};
+use crate::pulls::{PULLS, PrSource, PullSettings};
 use crate::snapshots::{SNAPSHOTS, SnapshotRepo, SnapshotSettings, run_stage};
 
 fn snapshots_enabled(ws: &Workspace, opts: &CollectOptions) -> bool {
@@ -33,7 +36,13 @@ pub const REWORK: &str = "rework";
 
 /// Seconds per unit before any run has been timed (one worker; measured on an Apple M-series
 /// laptop, generous on purpose).
-const DEFAULT_COST: [(&str, f64); 4] = [(FETCH, 2.0), (INGEST, 0.001), (REWORK, 0.0015), (SNAPSHOTS, 20.0)];
+const DEFAULT_COST: [(&str, f64); 5] = [
+    (FETCH, 2.0),
+    (INGEST, 0.001),
+    (REWORK, 0.0015),
+    (SNAPSHOTS, 20.0),
+    (PULLS, 0.3),
+];
 
 #[derive(Clone)]
 pub struct CollectOptions {
@@ -53,6 +62,11 @@ pub struct CollectOptions {
     pub tools: Option<pm_snapshot::Tools>,
     /// Replay recorded osv-scanner output (see `snapshots::SnapshotSettings::osv_replay`).
     pub osv_replay: Option<std::path::PathBuf>,
+    /// Where merged PRs come from (default: the configured code host).
+    pub pull_requests: PrSource,
+    /// Which PRs a fetch asks for. `CreatedSince` replays the prototype's GitLab requests (parity
+    /// harness); it always fetches everything.
+    pub pr_selection: Selection,
     pub progress: Progress,
 }
 
@@ -67,6 +81,8 @@ impl CollectOptions {
             snapshots: true,
             tools: None,
             osv_replay: None,
+            pull_requests: PrSource::Live,
+            pr_selection: Selection::UpdatedSince,
             progress: Progress::off(),
         }
     }
@@ -307,6 +323,12 @@ pub fn plan_progress(ws: &Workspace, opts: &CollectOptions, plans: &[RepoPlan]) 
     p.add_stage(SNAPSHOTS, "snapshots", "trees", cost(SNAPSHOTS)?);
     if !snapshots_enabled(ws, opts) {
         p.skip(SNAPSHOTS, "off");
+    }
+    p.add_stage(PULLS, "pull requests", "PRs", cost(PULLS)?);
+    if ws.config.code_host.is_none() {
+        p.skip(PULLS, "no [code_host]");
+    } else {
+        p.plan(PULLS, 0, 0, true);
     }
     let fetches = plans.iter().filter(|r| r.needs_fetch).count() as u64;
     if fetches == 0 {
@@ -579,7 +601,20 @@ pub fn collect(ws: &Workspace, opts: &CollectOptions) -> Result<Collected> {
         repos.push(r.info);
     }
 
-    let snapshots = if snapshots_enabled(ws, opts) {
+    // Snapshots and pull requests run at the same time (plan §4).
+    let pull_settings = PullSettings {
+        ws,
+        as_of: opts.as_of,
+        source: &opts.pull_requests,
+        selection: opts.pr_selection,
+        use_cache: opts.use_cache,
+        incremental: opts.incremental,
+        progress: p.clone(),
+    };
+    let run_snapshots = || -> Result<Option<(SnapshotInput, pm_snapshot::Tools)>> {
+        if !snapshots_enabled(ws, opts) {
+            return Ok(None);
+        }
         let tools = opts.tools.clone().unwrap_or_else(crate::detect_tools);
         for id in pm_snapshot::ToolId::ALL {
             match tools.get(id) {
@@ -618,10 +653,29 @@ pub fn collect(ws: &Workspace, opts: &CollectOptions) -> Result<Collected> {
         };
         let cadence = config.snapshots.cadence.unwrap_or_default();
         let input = run_stage(&settings, &snap_repos, cadence, config.snapshots.jobs.unwrap_or(2))?;
-        Some((input, tools))
-    } else {
-        None
+        Ok(Some((input, tools)))
     };
+    let (snapshots, pulls) = std::thread::scope(|s| {
+        let pulls = s.spawn(|| crate::pulls::run_stage(&pull_settings));
+        let snapshots = run_snapshots();
+        (snapshots, pulls.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+    });
+    let snapshots = snapshots?;
+    let pulls = pulls?;
+    if let Some(pulls) = &pulls {
+        let inputs = crate::pulls::inputs(
+            &pulls.repos,
+            &shared.identity,
+            &shared.classifier,
+            !opts.prototype_compat,
+        );
+        let pr_days = pm_metrics::pr::pr_days(&inputs);
+        let window: Days = pr_days
+            .range(range_start..=opts.as_of)
+            .map(|(d, day)| (*d, day.clone()))
+            .collect();
+        merge_days(&mut days, &window);
+    }
 
     let mut tool_versions = BTreeMap::new();
     tool_versions.insert("pmx".to_string(), env!("CARGO_PKG_VERSION").to_string());
@@ -655,6 +709,7 @@ pub fn collect(ws: &Workspace, opts: &CollectOptions) -> Result<Collected> {
             "spec".into()
         },
         snapshots: snapshots.map(|(input, _)| input).unwrap_or_default(),
+        pulls: pulls.map(|p| p.info),
     });
     Ok(Collected {
         project,

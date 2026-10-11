@@ -1,10 +1,11 @@
 # project-metrics
 
-> **Status: early development.** Milestones M1–M3 are done: pmx sets up a multi-repo workspace, collects
-> the git-derived metrics (activity, rework, tests/docs-with-code, multi-stack, AI-assisted) and the
-> snapshot metrics (duplication, complexity, dependency vulnerabilities, secrets, SAST) incrementally,
-> reproduces the private prototype, and shows a project dashboard. PR flow and Velocity come next. The
-> design lives in the [wiki](wiki/README.md).
+> **Status: early development.** Milestones M1–M4 are done: pmx sets up a multi-repo workspace, collects
+> the git-derived metrics (activity, rework, tests/docs-with-code, multi-stack, AI-assisted), the
+> snapshot metrics (duplication, complexity, dependency vulnerabilities, secrets, SAST) and the PR flow
+> from GitHub or GitLab (peer review, cycle time, review wait, mentoring) incrementally, reproduces the
+> private prototype, and shows a project dashboard. Velocity comes next. The design lives in the
+> [wiki](wiki/README.md).
 
 ## Try it
 
@@ -20,7 +21,9 @@ cargo build --release && export PATH="$PWD/target/release:$PATH"
 mkdir -p ~/metrics/acme-shop && cd ~/metrics/acme-shop
 pmx init ~/src/acme          # finds the clones, suggests branch + role per repo, writes pmx.toml
 pmx repo set shop-legacy --role per-file   # fix a suggestion if needed
-pmx people                   # who is who across repos; --apply writes [people]
+pmx repo set shop-api --code-host-id acme/shop-api   # GitHub owner/repo or GitLab project id
+export GITHUB_TOKEN=…        # or the [code_host] token_env: read access to PRs, for peer review
+pmx people                   # who is who across repos (and, after a collect, code-host logins)
 pmx check                    # paths, branches, tokens, unmapped identities
 pmx doctor                   # which snapshot tools are installed
 pmx tools install            # pinned scc, osv-scanner, gitleaks (checksum-verified)
@@ -33,7 +36,8 @@ pmx export --format long --weekly
 ```
 
 `collect` writes `out/project.json` (team level; people are pseudonymous ids) and
-`out/private/leads.json` (per-person drill-downs, for the lead only). Re-runs only read new commits.
+`out/private/leads.json` (per-person drill-downs, for the lead only). Re-runs only read new commits and
+ask the code host only for PRs updated since the last run.
 A config from the Python prototype converts with `pmx import-config config_acme.json`.
 
 ## Design

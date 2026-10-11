@@ -1,5 +1,6 @@
 //! `pmx demo`: a fictional project to try the tool and to develop the dashboard against, with
-//! nothing real in it. Four repos, five people over ~14 months, written with `git fast-import`.
+//! nothing real in it. Four repos, five people over ~14 months, written with `git fast-import`,
+//! and their pull requests.
 //! The same `as_of` always gives the same history.
 
 use std::collections::BTreeMap;
@@ -10,6 +11,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, bail};
 use chrono::{Datelike, Days, NaiveDate};
 use pm_classify::Role;
+use pm_codehost::{Account, MergedPr, Review};
 use pm_config::{Config, People, Project, RepoConfig, RepoRole, Workspace};
 
 /// A small deterministic generator (SplitMix64).
@@ -85,6 +87,8 @@ fn capitalize(s: &str) -> String {
 struct Person {
     name: &'static str,
     emails: &'static [&'static str],
+    /// Code-host login.
+    login: &'static str,
     /// Weight per repo in `REPOS` order.
     repos: [u32; 4],
     weekly: u64,
@@ -97,6 +101,7 @@ struct Person {
 const PEOPLE: &[Person] = &[
     Person {
         name: "Ana Kovacs",
+        login: "ana-kovacs",
         emails: &["ana@acme.example"],
         repos: [4, 6, 0, 0],
         weekly: 4,
@@ -106,6 +111,7 @@ const PEOPLE: &[Person] = &[
     },
     Person {
         name: "Ben Ortiz",
+        login: "bortiz",
         emails: &["ben@acme.example", "ben.ortiz@home.example"],
         repos: [9, 0, 0, 1],
         weekly: 4,
@@ -115,6 +121,7 @@ const PEOPLE: &[Person] = &[
     },
     Person {
         name: "Chen Wu",
+        login: "chenwu",
         emails: &["chen@acme.example"],
         repos: [3, 0, 7, 0],
         weekly: 3,
@@ -124,6 +131,7 @@ const PEOPLE: &[Person] = &[
     },
     Person {
         name: "Dana Fox",
+        login: "dana.fox",
         emails: &["dana@acme.example"],
         repos: [0, 4, 0, 6],
         weekly: 3,
@@ -133,6 +141,7 @@ const PEOPLE: &[Person] = &[
     },
     Person {
         name: "Eli Novak",
+        login: "eli-novak",
         emails: &["eli@acme.example"],
         repos: [0, 10, 0, 0],
         weekly: 3,
@@ -143,6 +152,9 @@ const PEOPLE: &[Person] = &[
 ];
 
 const EXTERNAL: (&str, &str) = ("Sam Contractor", "sam@agency.example");
+const EXTERNAL_LOGIN: &str = "samc";
+/// The demo's fictional GitHub organization.
+const ORG: &str = "acme-example";
 const BOT: (&str, &str) = ("dependabot[bot]", "49699333+dependabot[bot]@users.noreply.github.com");
 
 #[derive(Default)]
@@ -522,10 +534,12 @@ pub fn generate(dir: &Path, as_of: NaiveDate) -> Result<Workspace> {
 
     let mut people = People::default();
     for p in PEOPLE {
-        people
-            .persons
-            .insert(p.name.into(), p.emails.iter().map(|e| e.to_string()).collect());
+        let ids = p.emails.iter().chain([&p.login]).map(|e| e.to_string()).collect();
+        people.persons.insert(p.name.into(), ids);
     }
+    people
+        .persons
+        .insert(EXTERNAL.0.into(), vec![EXTERNAL.1.into(), EXTERNAL_LOGIN.into()]);
     people.externals = vec![EXTERNAL.0.into()];
     let config = Config {
         project: Project {
@@ -540,11 +554,19 @@ pub fn generate(dir: &Path, as_of: NaiveDate) -> Result<Workspace> {
                 path: Some(format!("repos/{}", s.name)),
                 branch: Some("main".into()),
                 role: RepoRole::Fixed(s.role),
+                code_host_id: Some(pm_config::CodeHostId::Name(format!("{ORG}/{}", s.name))),
                 ..Default::default()
             })
             .collect(),
         role_rules: None,
-        code_host: None,
+        // There is no such organization: `pmx demo` passes its PRs in, and a later
+        // `pmx collect` without the token keeps using the stored ones.
+        code_host: Some(pm_config::CodeHost {
+            kind: pm_config::CodeHostKind::Github,
+            base: None,
+            group: None,
+            token_env: Some("PMX_DEMO_TOKEN".into()),
+        }),
         people,
         fte: None,
         secrets_triage: Vec::new(),
@@ -567,6 +589,96 @@ pub fn generate(dir: &Path, as_of: NaiveDate) -> Result<Workspace> {
     })
 }
 
+fn account(login: &str) -> Account {
+    Account {
+        login: login.into(),
+        name: None,
+        bot: login.ends_with("[bot]"),
+    }
+}
+
+/// The demo's merged pull requests per repo (fictional; same `as_of`, same PRs). Review coverage
+/// improves over the year, Eli (who joins later) gets mentored by the frontend experts, and a
+/// contractor's and a bot's PRs show the exclusions.
+pub fn pull_requests(as_of: NaiveDate) -> BTreeMap<String, Vec<MergedPr>> {
+    let range_start = month_add(as_of, -13);
+    let mut rng = Rng(as_of.num_days_from_ce() as u64 ^ 0x5eed);
+    let total_days = (as_of - range_start).num_days().max(1) as f64;
+    let at = |day: NaiveDate, minutes: u64| {
+        let t = day.and_hms_opt(8, 0, 0).expect("valid time").and_utc() + chrono::Duration::minutes(minutes as i64);
+        t.fixed_offset()
+    };
+    let mut out: BTreeMap<String, Vec<MergedPr>> = BTreeMap::new();
+    let mut number = 1u64;
+    let mut day = range_start;
+    while day <= as_of {
+        let t = (day - range_start).num_days() as f64 / total_days;
+        if day.weekday().num_days_from_monday() < 5 {
+            let mut authors: Vec<(&str, usize)> = Vec::new();
+            for p in PEOPLE {
+                if day < month_add(range_start, p.joins as i32 - 2) || !rng.chance(p.weekly as f64 / 8.0) {
+                    continue;
+                }
+                let total: u32 = p.repos.iter().sum();
+                let mut pick = rng.below(total as u64) as u32;
+                let ri = p.repos.iter().position(|w| {
+                    if pick < *w {
+                        true
+                    } else {
+                        pick -= w;
+                        false
+                    }
+                });
+                authors.push((p.login, ri.unwrap_or(0)));
+            }
+            if rng.chance(0.08) {
+                authors.push((EXTERNAL_LOGIN, 1));
+            }
+            if rng.chance(0.05) {
+                authors.push(("dependabot[bot]", rng.below(2) as usize));
+            }
+            for (login, ri) in authors {
+                let created = at(day, rng.below(480));
+                let cycle = 30 + rng.below(if t < 0.5 { 4000 } else { 2000 });
+                let mut reviews = Vec::new();
+                // Coverage grows from about half to most PRs.
+                if rng.chance(0.45 + 0.45 * t) {
+                    let wait = 10 + rng.below(cycle.max(20) - 10);
+                    let mut reviewers: Vec<&Person> =
+                        PEOPLE.iter().filter(|p| p.login != login && p.repos[ri] > 0).collect();
+                    if reviewers.is_empty() {
+                        reviewers = PEOPLE.iter().filter(|p| p.login != login).collect();
+                    }
+                    let r = reviewers[rng.below(reviewers.len() as u64) as usize];
+                    reviews.push(Review {
+                        by: account(r.login),
+                        at: at(day, rng.below(480) + wait),
+                    });
+                }
+                let merged = created + chrono::Duration::minutes(cycle as i64);
+                if merged.date_naive() > as_of {
+                    continue;
+                }
+                let additions = 5 + rng.below(400);
+                out.entry(REPOS[ri].name.to_string()).or_default().push(MergedPr {
+                    id: format!("#{number}"),
+                    author: Some(account(login)),
+                    created_at: created,
+                    merged_at: merged,
+                    updated_at: Some(merged),
+                    additions: Some(additions),
+                    deletions: Some(rng.below(additions)),
+                    files: None,
+                    reviews,
+                });
+                number += 1;
+            }
+        }
+        day = day + Days::new(1);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -587,5 +699,20 @@ mod tests {
         let d = NaiveDate::from_ymd_opt(2026, 10, 9).unwrap();
         assert_eq!(month_add(d, -13), NaiveDate::from_ymd_opt(2025, 9, 1).unwrap());
         assert_eq!(month_add(d, 3), NaiveDate::from_ymd_opt(2027, 1, 1).unwrap());
+    }
+
+    #[test]
+    fn pull_requests_are_deterministic_and_plausible() {
+        let as_of = NaiveDate::from_ymd_opt(2026, 10, 9).unwrap();
+        let prs = pull_requests(as_of);
+        assert_eq!(prs, pull_requests(as_of));
+        let all: Vec<&MergedPr> = prs.values().flatten().collect();
+        assert!(all.len() > 300, "{}", all.len());
+        assert!(
+            all.iter()
+                .all(|p| p.merged_at >= p.created_at && p.merged_at.date_naive() <= as_of)
+        );
+        assert!(all.iter().any(|p| p.author.as_ref().unwrap().login == EXTERNAL_LOGIN));
+        assert!(all.iter().any(|p| p.author.as_ref().unwrap().bot));
     }
 }

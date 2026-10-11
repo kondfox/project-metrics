@@ -1,10 +1,12 @@
 # Portable metrics tool — implementation plan
 
-**Status:** M1–M3 built (2026-10-09): the git-derived core reproduces the prototype (M1a, see
+**Status:** M1–M4 built (2026-10-11): the git-derived core reproduces the prototype (M1a, see
 [parity.md](parity.md) §6), a workspace can be set up, collected incrementally and resumed from the CLI
-(M1b), one project is viewable end to end in the dashboard (M2), and the snapshot metrics (duplication,
+(M1b), one project is viewable end to end in the dashboard (M2), the snapshot metrics (duplication,
 complexity, dependency vulnerabilities, secrets, SAST, hotspots, the Security score) reproduce the
-prototype (M3). M4 (code host) is next. Drafted 2026-10-08, revised 2026-10-09 with owner decisions.
+prototype (M3), and the PR flow from GitHub and GitLab (peer review, cycle time, review wait, PR size,
+mentoring) reproduces it too (M4). M5 (LLM classifier, Velocity) is next. Drafted 2026-10-08, revised
+2026-10-09 with owner decisions.
 **What** to measure is defined by [metrics-spec.md](metrics-spec.md) (source of truth). This page covers
 **how** to build the tool, which runs anywhere and shows its results in a web dashboard. Where this page
 changes the spec, it says so with **⟂ spec change**. The spec must be updated to match before M1.
@@ -43,6 +45,9 @@ in the browser. A second command combines several projects into the **fleet view
 | D22 | **`pmx tools install`** downloads the pinned scc, osv-scanner and gitleaks from their GitHub releases into the user cache (`PMX_TOOLS_DIR` overrides) and refuses any download whose SHA-256 differs from the digest compiled into pmx. semgrep and jscpd stay user-installed (`pmx doctor` says how) | 2026-10-09 |
 | D23 | ~~No bundled SAST rules yet~~ **Superseded by D24** | 2026-10-09 |
 | D24 | **Our own SAST rules, `pmx-sast@1`** (owner decision): 34 rules written from scratch under MIT OR Apache-2.0, bundled in the binary and used unless a project configures others. Precision over coverage (SAST is a trend); semgrep tests and a duplicate check in CI; versioned (any change is `@2`). Checked against the three pilot projects: 7 findings, all plausible, after excluding migrations from the SQL rules | 2026-10-11 |
+| D25 | **Code-host adapters** (`pm-codehost`): GitHub over **GraphQL** (one request per 25 PRs with reviews, and files for per-file repos; no `gh` needed), GitLab over REST (MR list, then notes four at a time). HTTP sits behind a small `Http` trait, so tests use fakes and the parity harness replays the golden set's recorded responses by request path | 2026-10-11 |
+| D26 | **PRs are fetched incrementally and stored one by one** in the cache: ask for PRs *updated* since the last complete fetch minus 24 h, skip those stored at the same `updated_at`. A fetch that fails falls back to the stored PRs with a warning; a repo with nothing stored makes the whole PR layer "not measured" rather than undercounting. A run `--as-of` a past date skips later merges and is not recorded as a fetch | 2026-10-11 |
+| D27 | **Expert status over a trailing year** (spec §8): ≥ 3 PRs and ≥ 25% of the stack's top author, counted over PRs merged in the 365 days before each PR's merge date, so a month's mentoring pairs never change when newer PRs arrive. Logins resolve through `[people]`, so a reviewer is "another person", not just another login | 2026-10-11 |
 | D10 | The parity harness is a workspace crate (`pmx-parity`, not published) that reads the golden set from `PMX_GOLDEN_DIR` and prints to the terminal only. It runs twice: in the **prototype dialect** (the prototype's test rules and git reading) every M1 series must match exactly; in the spec dialect the intentional differences are reported | 2026-10-09 |
 
 ---
@@ -69,7 +74,7 @@ pmx fleet serve|export --manifest fleet.toml ──► fleet.json + fleet dashbo
 | `pm-classify` | File class, test detection, stack role, technology (spec §1.4–1.5). Pure functions, table-driven tests |
 | `pm-git` | Streaming parsers for `git log --numstat` and the rework walk (`log -p -w`); snapshot trees via `git worktree`/`archive`; fetch |
 | `pm-snapshot` | Finds, runs and parses the external tools (pure parsers, tested on sample output); turns raw results into per-repo summaries (D21) |
-| `pm-codehost` | GitHub and GitLab adapters behind `merged_prs()` (spec §10.4) |
+| `pm-codehost` | GitHub (GraphQL) and GitLab (REST) adapters behind `CodeHost::merged_prs()` (spec §10.4), an `Http` seam for fakes and replays, the `gh pr list` export reader (D25) |
 | `pm-llm` | The classifier: the shared schema (§6.1), providers, data-policy guard, cache, eval harness |
 | `pm-metrics` | Roll-ups, ratios, scores (Quality, Security, Velocity, multi-stack). No I/O. **Also compiled to WASM** for the dashboard |
 | `pm-progress` | Work planning, ETA model, renderers (TTY / plain / JSON) (§5) |
@@ -122,9 +127,9 @@ One project is one **workspace folder**. The repos it lists can live anywhere.
 | Command | What it does |
 |---|---|
 | `pmx init [dirs…]` | Scans for git clones. Suggests a branch per repo (from `origin/HEAD`) and a role from the repo's contents: `*.csproj` → backend, React/Vite → frontend, `android/`/`ios/` → mobile, Terraform → infra, Cypress/Playwright → qa, mixed → `per-file`. Reads the code-host type and project id from the remote URL. Lockfiles are auto-discovered. You confirm the suggestions; it writes `pmx.toml` |
-| `pmx repo add <path\|url> [--role] [--branch] [--name]` · `list` · `set <name> [--role] [--branch] [--rev] [--rename]` · `remove` | Edit the repo list. For a URL, pmx keeps a bare clone in `.pmx/repos/` and only reads from it, so working copies are never touched. `add` suggests role and branch like `init` |
-| `pmx people` · `--apply` · `merge "<Person>" <id>…` · `bot <id>…` · `external <id>…` | Lists every author identity across **all** repos since `range_start` (code-host logins arrive with M4), and proposes merges: same normalized name, `first.last` email local part, GitHub noreply login. Flags automated-looking identities as bot candidates. `--apply` (or answering yes) writes `[people]`; `merge`/`bot`/`external` fix the rest. This step is what makes cross-repo per-person metrics (multi-stack, active devs, mentoring) correct |
-| `pmx check [--threshold 10]` | Every path exists (URL repos: reachable), every branch resolves, lockfile overrides exist, tokens are present, the `local-only` data policy holds for the classifier and its fallbacks, the FTE file has the project, and no identity with ≥ threshold commits is missing from `[people]`. Exit code 1 on any error |
+| `pmx repo add <path\|url> [--role] [--branch] [--name]` · `list` · `set <name> [--role] [--branch] [--rev] [--rename] [--code-host-id]` · `remove` | Edit the repo list. For a URL, pmx keeps a bare clone in `.pmx/repos/` and only reads from it, so working copies are never touched. `add` suggests role and branch like `init` |
+| `pmx people` · `--apply` · `merge "<Person>" <id>…` · `bot <id>…` · `external <id>…` | Lists every author identity across **all** repos since `range_start`, plus the code-host logins (authors and reviewers) of the PRs the last `collect` stored, and proposes merges: same normalized name, `first.last` email local part or login, a login's display name, GitHub noreply login. Flags automated-looking identities as bot candidates. `--apply` (or answering yes) writes `[people]`; `merge`/`bot`/`external` fix the rest. This step is what makes cross-repo per-person metrics (multi-stack, active devs, mentoring) correct |
+| `pmx check [--threshold 10]` | Every path exists (URL repos: reachable), every branch resolves, lockfile overrides exist, tokens are present, repos lack no `code_host_id` when `[code_host]` is set, the `local-only` data policy holds for the classifier and its fallbacks, the FTE file has the project, and no identity with ≥ threshold commits is missing from `[people]` (an unmapped login with ≥ threshold PRs and reviews is a warning). Exit code 1 on any error |
 | `pmx import-config config_acme.json` | Converts a prototype config (plus `externals.json`, `fte.json`, `secrets_triage.json`, found next to it or in `../tools/`, or passed with flags) |
 | `pmx plan` (= `collect --dry-run`) | Prints the work per stage and repo (cached, incremental, full) and the ETA, without running anything |
 
@@ -215,7 +220,8 @@ team-level data only.
 4. **Rework walk** (spec §3.1).
 5. **Snapshots:** for each week-end and month-end SHA not yet cached, run scc, jscpd, osv-scanner,
    gitleaks and semgrep. These run in a bounded worker pool.
-6. **Pull requests:** paginated, cached per page and by merge date.
+6. **Pull requests:** paginated, each PR stored as it arrives; later runs ask only for PRs updated
+   since the last fetch (D26).
 7. **Velocity:** build work packages → classifier (§6) → points.
 8. **Roll up:** `pm-metrics` produces `weeks[]`, `months[]`, scores and `meta`, then writes `project.json`
    and `private/leads.json`.
@@ -236,7 +242,7 @@ Before any heavy work, `collect` counts what's left with cheap queries, minus wh
 | Git ingest | commit | `git rev-list --count` per repo, from the last processed SHA |
 | Rework walk | commit | Commits since the cached tip's date minus 21 days (an estimate) |
 | Snapshots | (SHA, tool) | Uncached week-end/month-end SHAs × installed tools, weighted by tree size (KLOC from a quick `scc`) |
-| Pull requests | PR | API total (GitHub `total_count`, GitLab `X-Total`) minus cached |
+| Pull requests | PR | Unknown until listed: the total grows as each repo's list arrives (as built in M4; a merged PR's details cost one request on GitLab, none on GitHub). Default 0.3 s per PR |
 | Velocity | work package | Unscored packages. Known only after ingest; estimated from commits until then |
 
 ### 5.2 ETA model
@@ -445,7 +451,7 @@ derived from schema answers. The rubric version bump (`six-axis@2`) invalidates 
 | **M1b** ✓ 2026-10-09 | `init`, `repo`, `people`, `check`, `import-config` (CLI over the M1a converter, plus `fte.json` and `secrets_triage.json`); the progress, resume and ETA framework (§5), incl. incremental ingest from the last processed SHA | A new workspace set up from scratch without hand-editing TOML; Ctrl-C and resume lose at most the units in flight. **Done:** `crates/pmx/tests/cli.rs` runs init → people → repo → check → collect → export; `tests/incremental.rs` checks incremental, resumed and rewritten-history runs against full runs |
 | **M2** ✓ 2026-10-09 | Project dashboard: weekly/monthly, custom range via WASM, low-n and "not measured" states, `serve`/`export` | One project viewable end to end. **Done:** `pmx serve` / `pmx export --format html`; headline, Quality, activity, multi-stack (with the private leaders table) and AI sections; view state in the URL hash (`#monthly&2026-06-15..2026-09-30`); `tests/dashboard.rs` covers rendering, the privacy split, serving and WASM = CLI |
 | **M3** ✓ 2026-10-09 | `pm-snapshot`: scc, jscpd, osv-scanner, gitleaks, semgrep; Quality with duplication; Security score; SAST trend; `doctor`, `tools install` | Quality and Security reproduced for all three projects. **Done:** every snapshot series exact in the parity replay for all three projects, and in the live tool runs ([parity.md](parity.md) §6); dashboard Security and Code health sections; `tests/snapshots.rs` covers the stage with fake tools |
-| **M4** | `pm-codehost`: GitHub + GitLab; peer review, cycle time, review wait, mentoring (unified expert rule, spec §8) | Spec §8 complete |
+| **M4** ✓ 2026-10-11 | `pm-codehost`: GitHub + GitLab; peer review, cycle time, review wait, mentoring (unified expert rule, spec §8) | Spec §8 complete. **Done:** every PR series exact against the recorded GitLab responses and the GitHub export for all three projects in the prototype dialect; in the spec dialect the only deltas are the months with PRs by bots or externals, and mentoring pairs (the unified rule) ([parity.md](parity.md) §6); `tests/pulls.rs` covers the stage against a fake GitLab (incremental fetch, fallback to stored PRs, not measured); dashboard Peer review section; `pmx demo` has PRs |
 | **M5** | `pm-llm`: schema types, `jev`, `openai-compatible`, `anthropic` and `command` providers, data-policy guard, confidence gate, cache, `classifier eval`; Velocity on `six-axis@2` | At least one remote and one local classifier pass the eval |
 | **M6** | Local fleet: `fleet.toml`, aggregation, fleet dashboard | Fleet rebuilt from the three local project folders |
 | **M7** | Packaging, `init` wizard polish, docs | 15-minute onboarding verified by someone new |

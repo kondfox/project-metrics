@@ -7,18 +7,23 @@ use pm_classify::Role;
 use serde::{Deserialize, Serialize};
 
 use crate::day::{Day, Days, Group, aggregate};
+use crate::pr::hours;
 use crate::snapshot::SnapshotPoint;
-use crate::stats::{entropy_norm, median, pct, percentile};
+use crate::stats::{entropy_norm, median, median_f64, pct, percentile};
 
 /// A role or technology counts for a person from this many added lines (spec §5).
 pub const MULTISTACK_THRESHOLD: u64 = 40;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct MetricOptions {
     pub breadth_roles: Vec<Role>,
     pub ai_attribution: bool,
     /// Roles that get a `mix_<role>` series (those with lines anywhere in the project).
     pub mix_roles: Vec<Role>,
+    /// Code-host data was collected (spec §8); else the PR metrics are left out (not measured).
+    pub pull_requests: bool,
+    /// The code host reports PR line counts (GitHub).
+    pub pr_size: bool,
 }
 
 /// One person's multi-stack line-up in a window (lead-only drill-down).
@@ -217,6 +222,25 @@ pub fn metrics(agg: &Day, opts: &MetricOptions, snapshot: Option<&SnapshotPoint>
         m.put("ai_assist_line_pct", pct(agg.ai.added, all.added), Some(all.added));
     }
 
+    if opts.pull_requests {
+        let pr = &agg.pr;
+        let merged = Some(pr.merged as u64);
+        let reviewed = Some(pr.reviewed as u64);
+        let h = |ms: &[u64]| median_f64(&ms.iter().map(|x| hours(*x)).collect::<Vec<_>>());
+        m.put("pr_count", Some(pr.merged as f64), None);
+        m.put("pr_cycle_median_h", h(&pr.cycle_ms), merged);
+        m.put("review_wait_median_h", h(&pr.wait_ms), reviewed);
+        m.put("review_coverage_pct", pct(pr.reviewed as u64, pr.merged as u64), merged);
+        m.put("mentoring_pairs", Some(pr.mentored as f64), reviewed);
+        if opts.pr_size {
+            m.put(
+                "pr_size_median",
+                percentile(&pr.sizes, 0.5),
+                Some(pr.sizes.len() as u64),
+            );
+        }
+    }
+
     if let Some(sp) = snapshot {
         for (id, v) in &sp.values {
             m.values.insert(id.clone(), *v);
@@ -337,9 +361,14 @@ mod tests {
             breadth_roles: vec![Role::Backend],
             ai_attribution: true,
             mix_roles: vec![Role::Backend],
+            pull_requests: true,
+            pr_size: true,
         };
         let m = metrics(&Day::default(), &opts, None);
         assert_eq!(m.values["commits"], Some(0.0));
+        assert_eq!(m.values["pr_count"], Some(0.0));
+        let without = metrics(&Day::default(), &MetricOptions::default(), None);
+        assert!(!without.values.contains_key("pr_count"), "not measured: left out");
         for id in [
             "rework_pct",
             "test_discipline_pct",
@@ -349,6 +378,10 @@ mod tests {
             "ai_assist_commit_pct",
             "mix_backend",
             "quality",
+            "pr_cycle_median_h",
+            "review_wait_median_h",
+            "review_coverage_pct",
+            "pr_size_median",
         ] {
             assert_eq!(m.values[id], None, "{id}");
         }

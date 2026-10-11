@@ -1,9 +1,10 @@
-//! Roll-ups, ratios and scores (metrics spec §1–§6). No I/O.
+//! Roll-ups, ratios and scores (metrics spec §1–§8). No I/O.
 
 pub mod day;
 pub mod metrics;
 pub mod model;
 pub mod period;
+pub mod pr;
 pub mod snapshot;
 pub mod stats;
 

@@ -39,7 +39,7 @@ Exact definitions, formulas and inputs: **[metrics-spec.md](metrics-spec.md)**. 
 | Velocity | points per FTE-day per week/month; points/commit, points/KLOC |
 | AI | AI-assisted commits/lines %, AI vs human comparison (size, tests, docs) over 12 months |
 | Security | open dependency vulns by severity over time; own-code SAST findings (trend only); new/fixed findings, live secrets, suppressions |
-| Flow & people | PR cycle time, review wait, mentoring pairs; multi-stack %, breadth index, techs per dev |
+| Flow & people | merged PRs, peer review %, PR cycle time, review wait, PR size (GitHub), mentoring pairs; multi-stack %, breadth index, techs per dev |
 
 ## Where the data comes from
 **git** (all flow metrics) · **scc / jscpd** (complexity, duplication) · **OSV-Scanner / gitleaks /

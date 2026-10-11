@@ -10,6 +10,7 @@ import { SecuritySection } from "./sections/SecuritySection";
 import { HeadlineSection } from "./sections/HeadlineSection";
 import { MultiStackSection } from "./sections/MultiStackSection";
 import { QualitySection } from "./sections/QualitySection";
+import { ReviewSection } from "./sections/ReviewSection";
 import { useRangeMetrics } from "./state/hooks";
 
 /** The project dashboard. A new area of metrics is a new section here. */
@@ -26,6 +27,7 @@ export function App() {
           <QualitySection />
           <SecuritySection />
           <CodeHealthSection />
+          <ReviewSection />
           <ActivitySection />
           <MultiStackSection />
           <AiSection />

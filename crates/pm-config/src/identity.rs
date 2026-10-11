@@ -14,6 +14,11 @@ static BOT_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
+/// Code-host service accounts (GitLab's ghost user, support and alert bots, project and group
+/// access-token bots); GitHub marks its bots itself.
+static LOGIN_BOT_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^(ghost|support-bot|alert-bot|project_bot)$|^(project|group)_\d+_bot").unwrap());
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Exclusion {
     Bot,
@@ -76,6 +81,31 @@ impl Identity {
         };
         Author { person, excluded }
     }
+
+    /// A code-host login (spec §1.3, §8): the `[people]` person it is listed for, else the login.
+    /// `name` is the account's display name, `host_bot` the host's own bot flag; both are matched
+    /// like a commit's author name.
+    pub fn resolve_login(&self, login: &str, name: Option<&str>, host_bot: bool) -> Author {
+        let l = login.trim().to_lowercase();
+        let n = name.map(|n| n.trim().to_lowercase()).unwrap_or_default();
+        let person = self.by_id.get(&l).cloned().unwrap_or_else(|| login.trim().to_string());
+        let excluded = if host_bot
+            || self.bots.contains(&l)
+            || (!n.is_empty() && self.bots.contains(&n))
+            || BOT_PATTERN.is_match(login.trim())
+            || LOGIN_BOT_PATTERN.is_match(login.trim())
+        {
+            Some(Exclusion::Bot)
+        } else if self.externals.contains(&l)
+            || (!n.is_empty() && self.externals.contains(&n))
+            || self.externals.contains(&person.to_lowercase())
+        {
+            Some(Exclusion::External)
+        } else {
+            None
+        };
+        Author { person, excluded }
+    }
 }
 
 #[cfg(test)]
@@ -117,6 +147,46 @@ mod tests {
             assert_eq!(id.resolve(e, n).excluded, Some(Exclusion::Bot), "{e} {n}");
         }
         assert_eq!(id.resolve("claude.monet@example.com", "Claude Monet").excluded, None);
+    }
+
+    #[test]
+    fn logins() {
+        let id = Identity::new(&people());
+        assert_eq!(
+            id.resolve_login("JDoe", None, false),
+            Author {
+                person: "Jane Doe".into(),
+                excluded: None
+            }
+        );
+        assert_eq!(id.resolve_login("someone", None, false).person, "someone");
+        for (login, bot) in [
+            ("dependabot[bot]", false),
+            ("ghost", false),
+            ("project_42_bot_3f9a", false),
+            ("group_7_bot", false),
+            ("ci@example.com", false),
+            ("helper", true),
+        ] {
+            assert_eq!(
+                id.resolve_login(login, None, bot).excluded,
+                Some(Exclusion::Bot),
+                "{login}"
+            );
+        }
+        assert_eq!(id.resolve_login("project_lead", None, false).excluded, None);
+        let mut p = people();
+        p.persons.get_mut("Sam Contractor").unwrap().push("samc".into());
+        let id = Identity::new(&p);
+        assert_eq!(
+            id.resolve_login("samc", None, false).excluded,
+            Some(Exclusion::External)
+        );
+        let id = Identity::new(&people());
+        assert_eq!(
+            id.resolve_login("s-c", Some("Sam Contractor"), false).excluded,
+            Some(Exclusion::External)
+        );
     }
 
     #[test]

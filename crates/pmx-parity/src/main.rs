@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+mod pulls;
 mod snapshots;
 
 use anyhow::{Context, Result, bail};
@@ -43,6 +44,16 @@ const M1_METRICS: &[&str] = &[
     "ai_assist_line_pct",
 ];
 
+/// PR-flow metrics (spec §8), from the recorded code-host data.
+const PR_METRICS: &[&str] = &[
+    "pr_count",
+    "pr_cycle_median_h",
+    "review_wait_median_h",
+    "review_coverage_pct",
+    "pr_size_median",
+    "mentoring_pairs",
+];
+
 /// `Prototype` reads git and detects tests as the prototype did, so the rest of the pipeline is
 /// checked exactly; `Spec` is the real tool, whose intentional differences are reported.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -69,6 +80,8 @@ enum Rounding {
 fn rounding(metric: &str) -> Rounding {
     match metric {
         "commits" | "added" | "active_devs" | "code" | "suppressions" => Rounding::Int,
+        "pr_count" | "mentoring_pairs" => Rounding::Int,
+        "pr_size_median" => Rounding::Trunc,
         m if m.starts_with("vuln_") || m.starts_with("secrets_") => Rounding::Int,
         "sast_high" | "sast_medium" | "sast_low" | "sast_new" | "sast_fixed" => Rounding::Int,
         "dup_pct" => Rounding::Places(2),
@@ -152,6 +165,8 @@ fn load_golden() -> Result<Golden> {
 
 struct Run {
     project: ProjectFile,
+    /// Months with PRs by authors the spec excludes, and how many.
+    excluded_pr_months: BTreeMap<String, u32>,
     /// metric → period → value, with the prototype's windows where they differ from the spec.
     values: BTreeMap<String, BTreeMap<String, Option<f64>>>,
 }
@@ -186,16 +201,31 @@ fn run_project(g: &Golden, key: &str, mode: Mode) -> Result<Run> {
     }
     let as_of = NaiveDate::parse_from_str(g.manifest["as_of"].as_str().unwrap_or_default(), "%Y-%m-%d")?;
     let tmp = tempfile::tempdir()?;
+    let mut config = imported.config;
+    let prs = pulls::source(&g.dir, key, &mut config)?;
+    if prs.is_none() {
+        // Never fetch live in a parity run.
+        config.code_host = None;
+    }
     let ws = Workspace {
         root: tmp.path().to_path_buf(),
-        config: imported.config,
+        config,
     };
     let mut opts = CollectOptions::new(as_of);
     opts.fetch = false;
     opts.use_cache = false;
     opts.prototype_compat = mode == Mode::Prototype;
     opts.snapshots = false;
+    let excluded_pr_months = prs.as_ref().map(|g| g.excluded_months.clone()).unwrap_or_default();
+    if let Some(g) = prs {
+        opts.pull_requests = g.source;
+        // The recorded GitLab requests are the prototype's (created since range_start).
+        opts.pr_selection = pm_codehost::Selection::CreatedSince;
+    }
     let c = collect(&ws, &opts)?;
+    for w in &c.warnings {
+        println!("  note: {w}");
+    }
     let p = c.project;
 
     let mut values: BTreeMap<String, BTreeMap<String, Option<f64>>> = BTreeMap::new();
@@ -237,7 +267,11 @@ fn run_project(g: &Golden, key: &str, mode: Mode) -> Result<Run> {
             }
         }
     }
-    Ok(Run { project: p, values })
+    Ok(Run {
+        project: p,
+        values,
+        excluded_pr_months,
+    })
 }
 
 struct Line {
@@ -249,6 +283,13 @@ struct Line {
 }
 
 fn expectation(metric: &str, mode: Mode, ai_window_ok: bool) -> Expect {
+    // The expert rule is unified across hosts and windowed (spec §8, parity.md §3).
+    if metric == "mentoring_pairs" {
+        return Expect::Differs;
+    }
+    if PR_METRICS.contains(&metric) {
+        return Expect::Exact;
+    }
     if mode == Mode::Prototype {
         // The prototype's test rules and git reading: every M1 series must match exactly, except
         // the AI comparison when the spec moved its window.
@@ -274,13 +315,38 @@ fn compare(g: &Golden, key: &str, run: &Run, mode: Mode) -> Vec<Line> {
         .into_iter()
         .flatten()
         .all(|r| r["tip_date"].as_str().is_some_and(|d| d[..10] <= *as_of));
-    compare_values(
-        &g.rows,
-        key,
-        &run.values,
-        |m| M1_METRICS.contains(&m) || m.starts_with("mix_") || m.starts_with("ai_compare_"),
-        |m| expectation(m, mode, ai_window_ok),
-    )
+    let in_scope = |m: &str| {
+        M1_METRICS.contains(&m) || PR_METRICS.contains(&m) || m.starts_with("mix_") || m.starts_with("ai_compare_")
+    };
+    // The spec drops PRs by bots and externals (parity.md §3): those months are deltas.
+    let excluded = |metric: &str, period: &str| {
+        mode == Mode::Spec && PR_METRICS.contains(&metric) && run.excluded_pr_months.contains_key(period)
+    };
+    if mode == Mode::Spec && !run.excluded_pr_months.is_empty() {
+        let months: Vec<String> = run
+            .excluded_pr_months
+            .iter()
+            .map(|(m, n)| format!("{m}: {n}"))
+            .collect();
+        println!(
+            "  note: PRs by bots or externals, excluded by the spec: {}",
+            months.join(", ")
+        );
+    }
+    let (same, other): (BTreeMap<_, _>, BTreeMap<_, _>) = g
+        .rows
+        .clone()
+        .into_iter()
+        .partition(|((_, metric, period), _)| !excluded(metric, period));
+    let mut lines = compare_values(&same, key, &run.values, in_scope, |m| {
+        expectation(m, mode, ai_window_ok)
+    });
+    let mut deltas = compare_values(&other, key, &run.values, in_scope, |_| Expect::Differs);
+    for l in &mut deltas {
+        l.metric = format!("{} (excl. authors)", l.metric);
+    }
+    lines.extend(deltas);
+    lines
 }
 
 /// Snapshot metrics of `metrics.csv` (parity.md §3).
@@ -551,7 +617,7 @@ fn report(lines: &[Line], show_all: bool) -> bool {
             .collect();
         let more = l.mismatches.len().saturating_sub(shown);
         println!(
-            "  {:<26} {:<8} {:>4}/{:<4} {:<5} {}{}",
+            "  {:<34} {:<8} {:>4}/{:<4} {:<5} {}{}",
             l.metric,
             format!("{:?}", l.expect).to_lowercase(),
             l.matched,
@@ -619,7 +685,7 @@ fn real_main() -> Result<bool> {
             let lines = compare(&g, key, &run, *mode);
             println!("\n[{key}] ({:.1}s)", started.elapsed().as_secs_f64());
             println!(
-                "  {:<26} {:<8} {:>9}  first differences (period: golden → pmx)",
+                "  {:<34} {:<8} {:>9}  first differences (period: golden → pmx)",
                 "metric", "expect", "match"
             );
             ok &= report(&lines, show_all);

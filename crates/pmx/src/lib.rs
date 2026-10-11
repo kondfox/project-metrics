@@ -8,6 +8,7 @@ pub mod demo;
 pub mod export;
 pub mod ingest;
 pub mod people;
+pub mod pulls;
 pub mod setup;
 pub mod snapshots;
 pub mod tools_install;
@@ -29,3 +30,4 @@ pub fn detect_tools() -> pm_snapshot::Tools {
 }
 
 pub use collect::{CollectOptions, Collected, collect, write_outputs};
+pub use pulls::PrSource;

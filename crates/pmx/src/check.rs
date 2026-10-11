@@ -145,14 +145,31 @@ pub fn check(ws: &Workspace, unmapped_threshold: u64) -> Vec<Finding> {
         }
     }
 
-    if let Some(h) = &c.code_host {
-        if let Some(env) = &h.token_env {
-            if std::env::var_os(env).is_none() {
-                out.push(f(
-                    Level::Warn,
-                    format!("code host token ${env} is not set (needed for PR metrics)"),
-                ));
-            }
+    if c.code_host.is_some() {
+        let env = crate::pulls::token_env(ws).expect("code host is set");
+        if std::env::var_os(&env).is_none() {
+            out.push(f(
+                Level::Warn,
+                format!("code host token ${env} is not set (needed for PR metrics)"),
+            ));
+        }
+        let with_id = crate::pulls::code_host_repos(ws).len();
+        let without: Vec<String> = c
+            .repos
+            .iter()
+            .filter(|r| r.code_host_id.is_none())
+            .map(|r| r.display_name())
+            .collect();
+        if with_id == 0 {
+            out.push(f(
+                Level::Warn,
+                "[code_host] is set but no repo has a `code_host_id`: peer review not measured".to_string(),
+            ));
+        } else if !without.is_empty() {
+            out.push(f(
+                Level::Warn,
+                format!("no `code_host_id`, so their PRs are not read: {}", without.join(", ")),
+            ));
         }
     }
     for (name, cl) in &c.classifiers {
@@ -182,17 +199,39 @@ pub fn check(ws: &Workspace, unmapped_threshold: u64) -> Vec<Finding> {
         }
     }
 
-    let (idents, warnings) = gather(ws);
+    let (mut idents, warnings) = gather(ws);
     out.extend(warnings.into_iter().map(|w| f(Level::Warn, w)));
+    let logins = crate::people::gather_logins(ws);
+    let n_logins = logins.len();
+    idents.extend(logins);
     let proposal = propose(&c.people, &idents);
     let unmapped: Vec<String> = proposal
         .rows
         .iter()
-        .filter(|(i, s)| matches!(s, Status::Proposed(_)) && i.commits >= unmapped_threshold)
+        .filter(|(i, s)| !i.login && matches!(s, Status::Proposed(_)) && i.commits >= unmapped_threshold)
         .map(|(i, _)| format!("{} ({} commits)", i.label(), i.commits))
         .collect();
+    // An unmapped login still counts as its own person; it matters for externals and for people
+    // with several logins, so it is a warning.
+    let unmapped_logins: Vec<String> = proposal
+        .rows
+        .iter()
+        .filter(|(i, s)| i.login && matches!(s, Status::Proposed(_)) && i.commits >= unmapped_threshold)
+        .map(|(i, _)| format!("{} ({} PRs+reviews)", i.label(), i.commits))
+        .collect();
+    if !unmapped_logins.is_empty() {
+        out.push(f(
+            Level::Warn,
+            format!(
+                "{} code-host logins with ≥ {unmapped_threshold} PRs and reviews are not in [people] (run `pmx people`): {}",
+                unmapped_logins.len(),
+                unmapped_logins.join(", ")
+            ),
+        ));
+    }
+    let idents_len = idents.len() - n_logins;
     if unmapped.is_empty() {
-        out.push(f(Level::Ok, format!("{} identities mapped in [people]", idents.len())));
+        out.push(f(Level::Ok, format!("{idents_len} identities mapped in [people]")));
     } else {
         out.push(f(
             Level::Error,

@@ -31,6 +31,22 @@ pub fn median(values: &[u32]) -> Option<f64> {
     })
 }
 
+/// Median of real values (Python's `statistics.median`): the mean of the two middle values for an
+/// even count.
+pub fn median_f64(values: &[f64]) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut v = values.to_vec();
+    v.sort_by(f64::total_cmp);
+    let n = v.len();
+    Some(if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        (v[n / 2 - 1] + v[n / 2]) / 2.0
+    })
+}
+
 /// Shannon entropy of a distribution, normalized by `ln(#values)`. 0 for fewer than two non-zero
 /// values.
 pub fn entropy_norm(values: &[u64]) -> f64 {
@@ -76,6 +92,8 @@ mod tests {
         assert_eq!(median(&[]), None);
         assert_eq!(median(&[3, 1, 2]), Some(2.0));
         assert_eq!(median(&[4, 1, 2, 3]), Some(2.5));
+        assert_eq!(median_f64(&[]), None);
+        assert_eq!(median_f64(&[0.5, 3.0, 1.0, 2.0]), Some(1.5));
     }
 
     #[test]

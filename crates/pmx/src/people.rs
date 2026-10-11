@@ -1,5 +1,6 @@
-//! `pmx people` (plan §3.2): every author identity across all repos, and proposed merges into
-//! `[people]`. Cross-repo per-person metrics (multi-stack, active devs) depend on this.
+//! `pmx people` (plan §3.2): every author identity across all repos, and every code-host login
+//! in the fetched PRs, with proposed merges into `[people]`. Cross-repo per-person metrics
+//! (multi-stack, active devs) and the PR layer (externals, mentoring) depend on this.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -7,19 +8,36 @@ use chrono::NaiveDate;
 use pm_config::{Exclusion, Identity, People, Workspace};
 use pm_git::{Git, LogRange};
 
-/// One `(email, name)` pair as recorded in commits since `range_start`.
+/// One `(email, name)` pair as recorded in commits since `range_start`, or a code-host login.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ident {
+    /// The email, or the login for a code-host account.
     pub email: String,
+    /// The author name, or the account's display name (else the login).
     pub name: String,
+    /// Commits, or for a login the PRs authored plus reviews given.
     pub commits: u64,
     pub repos: BTreeSet<String>,
     pub last: NaiveDate,
+    pub login: bool,
 }
 
 impl Ident {
     pub fn label(&self) -> String {
-        format!("{} <{}>", self.name, self.email)
+        if self.login {
+            if self.name == self.email {
+                format!("@{}", self.email)
+            } else {
+                format!("@{} ({})", self.email, self.name)
+            }
+        } else {
+            format!("{} <{}>", self.name, self.email)
+        }
+    }
+
+    /// What `commits` counts.
+    pub fn unit(&self) -> &'static str {
+        if self.login { "PRs+reviews" } else { "commits" }
     }
 }
 
@@ -57,6 +75,7 @@ pub fn gather(ws: &Workspace) -> (Vec<Ident>, Vec<String>) {
                     commits: 0,
                     repos: BTreeSet::new(),
                     last: s.date,
+                    login: false,
                 });
             e.commits += 1;
             e.repos.insert(name.clone());
@@ -64,6 +83,49 @@ pub fn gather(ws: &Workspace) -> (Vec<Ident>, Vec<String>) {
         }
     }
     (map.into_values().collect(), warnings)
+}
+
+/// Code-host logins (PR authors and reviewers) in the PRs the last `pmx collect` stored. Empty
+/// until a collect has fetched PRs.
+pub fn gather_logins(ws: &Workspace) -> Vec<Ident> {
+    let path = ws.state_dir().join("cache.sqlite");
+    if !path.exists() || ws.config.code_host.is_none() {
+        return Vec::new();
+    }
+    let Ok(cache) = crate::cache::Cache::open(&path) else {
+        return Vec::new();
+    };
+    let mut map: BTreeMap<String, Ident> = BTreeMap::new();
+    let mut seen = |a: &pm_codehost::Account, repo: &str, date: NaiveDate| {
+        let e = map.entry(a.login.to_lowercase()).or_insert_with(|| Ident {
+            email: a.login.clone(),
+            name: a.name.clone().unwrap_or_else(|| a.login.clone()),
+            commits: 0,
+            repos: BTreeSet::new(),
+            last: date,
+            login: true,
+        });
+        e.commits += 1;
+        e.repos.insert(repo.to_string());
+        e.last = e.last.max(date);
+    };
+    for (repo, project_id) in crate::pulls::code_host_repos(ws) {
+        let scope = crate::pulls::scope(ws, repo, &project_id, pm_codehost::Selection::UpdatedSince);
+        let name = repo.display_name();
+        for pr in cache.prs::<pm_codehost::MergedPr>(&scope).unwrap_or_default() {
+            let date = pr.merged_at.date_naive();
+            if date < ws.config.project.range_start {
+                continue;
+            }
+            if let Some(a) = &pr.author {
+                seen(a, &name, date);
+            }
+            for r in &pr.reviews {
+                seen(&r.by, &name, r.at.date_naive());
+            }
+        }
+    }
+    map.into_values().collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,8 +163,8 @@ fn norm(s: &str) -> String {
         .collect()
 }
 
-/// Keys that identify the same person: the email, the normalized name, a `first.last` email
-/// local part, a GitHub noreply login.
+/// Keys that identify the same person: the email or login, the normalized name, a `first.last`
+/// email local part or login, a GitHub noreply login (which is also a login key).
 fn keys(email: &str, name: &str) -> Vec<String> {
     let email = email.trim().to_lowercase();
     let mut k = vec![format!("e:{email}")];
@@ -110,13 +172,17 @@ fn keys(email: &str, name: &str) -> Vec<String> {
     if n.chars().count() >= 3 {
         k.push(format!("n:{n}"));
     }
-    if let Some((local, domain)) = email.split_once('@') {
-        if domain == "users.noreply.github.com" {
+    match email.split_once('@') {
+        Some((local, "users.noreply.github.com")) => {
             let login = local.split_once('+').map(|(_, l)| l).unwrap_or(local);
             k.push(format!("n:{}", norm(login)));
-        } else if local.contains(['.', '_', '-']) {
-            k.push(format!("n:{}", norm(local)));
+            k.push(format!("e:{login}"));
         }
+        Some((local, _)) if local.contains(['.', '_', '-']) => k.push(format!("n:{}", norm(local))),
+        Some(_) => {}
+        // A login.
+        None if email.contains(['.', '_', '-']) => k.push(format!("n:{}", norm(&email))),
+        None => {}
     }
     k
 }
@@ -165,7 +231,11 @@ pub fn propose(current: &People, idents: &[Ident]) -> Proposal {
     let mut rows: Vec<(Ident, Status)> = Vec::new();
     let mut open: Vec<&Ident> = Vec::new();
     for i in idents {
-        let r = identity.resolve(&i.email, &i.name);
+        let r = if i.login {
+            identity.resolve_login(&i.email, Some(&i.name), false)
+        } else {
+            identity.resolve(&i.email, &i.name)
+        };
         let status = match (r.excluded, identity.mapped(&i.email)) {
             (Some(Exclusion::Bot), _) => Some(Status::Bot),
             (Some(Exclusion::External), _) => Some(Status::External),
@@ -223,6 +293,7 @@ pub fn propose(current: &People, idents: &[Ident]) -> Proposal {
                 .max_by_key(|i| {
                     (
                         i.name.trim().contains(' '),
+                        !i.login,
                         i.commits,
                         std::cmp::Reverse(i.name.clone()),
                     )
@@ -295,7 +366,48 @@ mod tests {
             commits,
             repos: BTreeSet::new(),
             last: NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+            login: false,
         }
+    }
+
+    fn login(login: &str, name: &str, n: u64) -> Ident {
+        Ident {
+            login: true,
+            ..id(login, name, n)
+        }
+    }
+
+    #[test]
+    fn maps_logins() {
+        let mut current = People::default();
+        current
+            .persons
+            .insert("Jane Doe".into(), vec!["jane@work.example".into(), "jdoe".into()]);
+        current.externals = vec!["Sam Contractor".into()];
+        let idents = vec![
+            id("jane@work.example", "Jane Doe", 40),
+            login("jdoe", "jdoe", 12),
+            login("bob.builder", "bob.builder", 7),
+            id("bob@work.example", "Bob Builder", 20),
+            login("pat-x", "Pat Example", 4),
+            id("pat@work.example", "Pat Example", 2),
+            id("12345+cyx@users.noreply.github.com", "Cy", 3),
+            login("cyx", "cyx", 2),
+            login("samc", "Sam Contractor", 5),
+            login("project_9_bot_ab12", "Bot", 5),
+        ];
+        let p = propose(&current, &idents);
+        let status = |email: &str| p.rows.iter().find(|(i, _)| i.email == email).unwrap().1.clone();
+        assert_eq!(status("jdoe"), Status::Mapped("Jane Doe".into()));
+        // A first.last login, a display name, a noreply login.
+        assert_eq!(status("bob.builder"), Status::Proposed("Bob Builder".into()));
+        assert_eq!(status("pat-x"), Status::Proposed("Pat Example".into()));
+        assert_eq!(status("cyx"), Status::Proposed("Cy".into()));
+        assert_eq!(status("samc"), Status::External);
+        assert_eq!(status("project_9_bot_ab12"), Status::Bot);
+        assert!(p.people.persons["Bob Builder"].contains(&"bob.builder".to_string()));
+        assert_eq!(login("cyx", "cyx", 2).label(), "@cyx");
+        assert_eq!(login("pat-x", "Pat Example", 2).label(), "@pat-x (Pat Example)");
     }
 
     #[test]

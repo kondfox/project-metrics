@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { DashboardProvider } from "./state/DashboardProvider";
-import { fixtureLeads, fixtureProject, fixtureWithSnapshots } from "./test/fixtures";
+import { fixtureLeads, fixtureProject, fixtureWithPulls, fixtureWithSnapshots } from "./test/fixtures";
 
 // ECharts needs a real layout engine; the chart options are tested on their own.
 vi.mock("./components/charts/EChart", () => ({ EChart: () => <div data-testid="chart" /> }));
@@ -60,6 +60,24 @@ describe("<App>", () => {
     expect(screen.getAllByRole("group", { name: "Duplication" })[0]).toHaveTextContent("4.00%");
     expect(screen.getAllByRole("group", { name: "SAST" })[0]).toHaveTextContent("not measured");
     expect(screen.getByRole("table", { name: "Most vulnerable packages" })).toHaveTextContent("left-pad");
+  });
+
+  it("shows peer review when code-host data was collected", () => {
+    const { unmount } = renderApp();
+    expect(screen.getAllByRole("group", { name: "Peer review" })[0]).toHaveTextContent("not measured");
+    unmount();
+    renderApp(fixtureWithPulls());
+    const [headline, tile] = screen.getAllByRole("group", { name: "Peer review" });
+    // September: 20 PRs, none reviewed (0% is a value, not "no data").
+    expect(headline).toHaveTextContent("0.0%");
+    expect(headline).toHaveTextContent("of 20 merged PRs");
+    expect(tile).toHaveTextContent("0.0%");
+    expect(screen.getByRole("group", { name: "Cycle time" })).toHaveTextContent("22.3 h");
+    expect(screen.getByRole("group", { name: "Review wait" })).toHaveTextContent(
+      "no reviewed PRs in this range",
+    );
+    expect(screen.getByRole("group", { name: "PR size" })).toHaveTextContent("not measured");
+    expect(screen.getByText(/from GitLab \(2 repos\)/)).toBeInTheDocument();
   });
 
   it("hides AI series when attribution is off", () => {

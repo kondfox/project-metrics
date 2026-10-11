@@ -1,3 +1,4 @@
+import { MeasuredTile } from "../components/tiles/MeasuredTile";
 import { MetricTile } from "../components/tiles/MetricTile";
 import { NotMeasuredTile } from "../components/tiles/NotMeasuredTile";
 import { QualityTile, SecurityTile } from "../components/tiles/ScoreTile";
@@ -31,7 +32,11 @@ export function HeadlineSection() {
         )}
         <NotMeasuredTile id="velocity" />
         <SecurityTile />
-        <NotMeasuredTile id="peer_review" />
+        <MeasuredTile
+          input="peer_review"
+          id="review_coverage_pct"
+          note={(m) => `of ${formatNumber(m.values.pr_count)} merged PRs`}
+        />
       </TileGrid>
     </Section>
   );

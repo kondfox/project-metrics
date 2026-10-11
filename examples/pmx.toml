@@ -11,7 +11,7 @@ ai_attribution = true
 path = "~/src/acme/shop-api"          # local clone…
 branch = "origin/development2"
 role = "backend"
-code_host_id = 785
+code_host_id = 785                    # GitLab project id (or "group/project"); GitHub: "owner/repo"
 
 [[repo]]
 url = "git@gitlab.example.com:acme/shop-web.git"   # …or a URL pmx clones itself
@@ -21,14 +21,14 @@ role = "frontend"
 path = "~/src/acme/shop-legacy"
 role = "per-file"                 # monorepo role rules for this repo only (spec §1.5)
 
-[code_host]
-type = "gitlab"
-base = "https://gitlab.example.com"
-token_env = "GL_TOKEN"
+[code_host]                       # PR flow (spec §8); repos without code_host_id are not read
+type = "gitlab"                   # or "github"
+base = "https://gitlab.example.com"   # default gitlab.com; for GitHub only Enterprise Server needs it
+token_env = "GL_TOKEN"            # default GITLAB_TOKEN / GITHUB_TOKEN; read access is enough
 
 [people]
 "Jane Doe" = ["jane.doe@example.com", "jdoe"]   # emails and logins together
-bots = ["gitlab-runner@example.com"]
+bots = ["gitlab-runner@example.com"]   # emails, names or logins
 externals = ["Sam Contractor"]
 
 [fte]                             # spec §10.2

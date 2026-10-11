@@ -168,7 +168,7 @@ enum RepoCommand {
         name: Option<String>,
     },
     List,
-    /// Change a repo's role, branch, pinned rev or name.
+    /// Change a repo's role, branch, pinned rev, name or code-host id.
     Set {
         name: String,
         #[arg(long)]
@@ -180,6 +180,9 @@ enum RepoCommand {
         rev: Option<String>,
         #[arg(long)]
         rename: Option<String>,
+        /// GitLab project id or path, or GitHub `owner/repo`; `none` removes it.
+        #[arg(long)]
+        code_host_id: Option<String>,
     },
     Remove {
         name: String,
@@ -446,8 +449,12 @@ fn cmd_repo(ws_dir: &Path, cmd: RepoCommand) -> Result<()> {
             branch,
             rev,
             rename,
+            code_host_id,
         } => {
             edit_config(ws_dir, |d| {
+                if let Some(id) = &code_host_id {
+                    d.set_repo_key(&name, "code_host_id", if id == "none" { None } else { Some(id) })?;
+                }
                 if let Some(r) = role {
                     d.set_repo_key(&name, "role", Some(&r.to_string()))?;
                 }
@@ -486,10 +493,15 @@ fn cmd_people(ws_dir: &Path, action: Option<PeopleCommand>, apply: bool) -> Resu
         }
         None => {}
     }
-    let (idents, warnings) = gather(&ws);
+    let (mut idents, warnings) = gather(&ws);
     for w in &warnings {
         eprintln!("warning: {w}");
     }
+    let logins = pmx::people::gather_logins(&ws);
+    if ws.config.code_host.is_some() && logins.is_empty() {
+        eprintln!("note: code-host logins are listed once `pmx collect` has fetched pull requests");
+    }
+    idents.extend(logins);
     let p = propose(&people, &idents);
     let mut current = String::new();
     for (i, s) in &p.rows {
@@ -504,15 +516,16 @@ fn cmd_people(ws_dir: &Path, action: Option<PeopleCommand>, apply: bool) -> Resu
             current = head;
         }
         println!(
-            "  {mark} {:<52} {:>6} commits  last {}  {}",
+            "  {mark} {:<52} {:>6} {:<11}  last {}  {}",
             i.label(),
             fmt_n(i.commits),
+            i.unit(),
             i.last,
             i.repos.iter().cloned().collect::<Vec<_>>().join(", ")
         );
     }
     if !p.bot_hints.is_empty() {
-        println!("\nlook automated (exclude with `pmx people bot <email>`):");
+        println!("\nlook automated (exclude with `pmx people bot <email or login>`):");
         for i in &p.bot_hints {
             println!("  {}", i.label());
         }
@@ -524,7 +537,7 @@ fn cmd_people(ws_dir: &Path, action: Option<PeopleCommand>, apply: bool) -> Resu
     }
     println!(
         "\n{n} identities marked + are not in [people] yet; above is where they would go.\n\
-         Fix a grouping with `pmx people merge \"<Person>\" <email>…`, exclude with `pmx people bot|external`."
+         Fix a grouping with `pmx people merge \"<Person>\" <email or login>…`, exclude with `pmx people bot|external`."
     );
     if apply || confirm("Write these into [people]?", false) {
         edit_config(ws_dir, |d| Ok(d.set_people(&p.people)?))?;
@@ -748,6 +761,7 @@ fn run(cli: Cli) -> Result<()> {
             eprintln!("wrote a fictional project to {}", dir.display());
             let mut opts = CollectOptions::new(as_of);
             opts.fetch = false;
+            opts.pull_requests = pmx::PrSource::Fixed(pmx::demo::pull_requests(as_of));
             cmd_collect(&ws, opts, Mode::auto())?;
             if let Some(dev) = dev_data {
                 std::fs::create_dir_all(&dev)?;

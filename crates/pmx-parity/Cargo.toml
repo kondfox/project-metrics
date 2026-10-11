@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 pm-classify.workspace = true
+pm-codehost.workspace = true
 pm-config.workspace = true
 pm-git.workspace = true
 pm-metrics.workspace = true

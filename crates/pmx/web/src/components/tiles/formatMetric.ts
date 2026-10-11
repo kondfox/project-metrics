@@ -5,6 +5,8 @@ export function formatMetric(def: MetricDef, v: number | null | undefined): stri
   switch (def.unit) {
     case "percent":
       return formatPercent(v, def.decimals ?? 1);
+    case "hours":
+      return v == null ? formatNumber(v) : `${formatNumber(v, def.decimals ?? 1)} h`;
     default:
       return formatNumber(v, def.decimals ?? 0);
   }

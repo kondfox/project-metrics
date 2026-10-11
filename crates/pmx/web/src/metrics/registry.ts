@@ -4,7 +4,7 @@ import type { Role } from "../data/types";
  * How the dashboard presents each metric id of `project.json` (spec §10.7). Adding a metric to the
  * dashboard starts here; the numbers themselves come from Rust (never computed in TypeScript).
  */
-export type Unit = "percent" | "count" | "lines" | "score" | "index" | "ratio";
+export type Unit = "percent" | "count" | "lines" | "score" | "index" | "ratio" | "hours";
 
 export interface MetricDef {
   label: string;
@@ -165,6 +165,47 @@ export const METRICS = {
     description: "nosemgrep, nosec, NOSONAR, …",
     spec: "§7.4",
   },
+  pr_count: {
+    label: "PRs merged",
+    unit: "count",
+    description: "merged PRs/MRs, bots and externals excluded",
+    spec: "§8",
+  },
+  pr_cycle_median_h: {
+    label: "Cycle time",
+    unit: "hours",
+    description: "median hours from opened to merged",
+    nCounts: "merged PRs",
+    spec: "§8",
+  },
+  review_wait_median_h: {
+    label: "Review wait",
+    unit: "hours",
+    description: "median hours from opened to the first review",
+    nCounts: "reviewed PRs",
+    spec: "§8",
+  },
+  review_coverage_pct: {
+    label: "Peer review",
+    unit: "percent",
+    description: "merged PRs with a review by someone other than the author",
+    nCounts: "merged PRs",
+    spec: "§8",
+  },
+  pr_size_median: {
+    label: "PR size",
+    unit: "lines",
+    description: "median added + deleted lines",
+    nCounts: "merged PRs",
+    spec: "§8",
+  },
+  mentoring_pairs: {
+    label: "Mentoring pairs",
+    unit: "count",
+    description: "reviewed PRs where an expert in the stack reviewed a non-expert",
+    nCounts: "reviewed PRs",
+    spec: "§8",
+  },
 } as const satisfies Record<string, MetricDef>;
 
 export type MetricId = keyof typeof METRICS | `mix_${Role}`;
@@ -195,7 +236,11 @@ export function metricDef(id: MetricId): MetricDef {
  */
 export const NOT_MEASURED = {
   velocity: { label: "Velocity", needs: "the LLM classifier (M5)" },
-  peer_review: { label: "Peer review", needs: "code-host data (M4)" },
+  peer_review: {
+    label: "Peer review",
+    needs: "code-host data: [code_host], a code_host_id per repo and a token (`pmx check`)",
+  },
+  pr_size: { label: "PR size", needs: "line counts, which only GitHub reports" },
   duplication: { label: "Duplication", needs: "jscpd (Node): see `pmx doctor`" },
   complexity: { label: "Complexity", needs: "scc: `pmx tools install`" },
   hotspots: { label: "Hotspots", needs: "scc: `pmx tools install`" },
@@ -207,7 +252,7 @@ export const NOT_MEASURED = {
 export type NotMeasuredId = keyof typeof NOT_MEASURED;
 
 /** Inputs that are always missing in this version (later milestones). */
-const NOT_BUILT: readonly NotMeasuredId[] = ["velocity", "peer_review"];
+const NOT_BUILT: readonly NotMeasuredId[] = ["velocity"];
 
 export function isMeasured(notMeasured: readonly string[], id: NotMeasuredId): boolean {
   return !NOT_BUILT.includes(id) && !notMeasured.includes(id);

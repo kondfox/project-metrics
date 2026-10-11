@@ -1,5 +1,6 @@
 //! `.pmx/cache.sqlite` (plan §2.2): each repo's stage results keyed by `(repo, stage, settings)`
-//! with the tip SHA they were computed at, plus per-stage timings for the ETA.
+//! with the tip SHA they were computed at, snapshot tool results, merged PRs, plus per-stage
+//! timings for the ETA.
 //!
 //! A result is written as soon as its repo finishes the stage, so an interrupted run loses at
 //! most the stages in flight. The next run continues from the stored SHA when the new tip descends
@@ -45,6 +46,17 @@ impl Cache {
              CREATE TABLE IF NOT EXISTS osv_scan (
                 key TEXT PRIMARY KEY,
                 data TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS pr_item (
+                scope TEXT NOT NULL,
+                id TEXT NOT NULL,
+                updated_at TEXT,
+                data TEXT NOT NULL,
+                PRIMARY KEY (scope, id)
+             );
+             CREATE TABLE IF NOT EXISTS pr_sync (
+                scope TEXT PRIMARY KEY,
+                synced_at TEXT NOT NULL
              );
              CREATE TABLE IF NOT EXISTS timing (
                 stage TEXT NOT NULL,
@@ -116,6 +128,55 @@ impl Cache {
         Ok(())
     }
 
+    /// The stored PRs of one fetch scope (a repo on a host with given fetch settings). Rows that no
+    /// longer parse are skipped.
+    pub fn prs<T: DeserializeOwned>(&self, scope: &str) -> Result<Vec<T>> {
+        let mut st = self
+            .db
+            .prepare("SELECT data FROM pr_item WHERE scope = ?1 ORDER BY id")?;
+        let rows = st.query_map(params![scope], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for data in rows {
+            if let Ok(v) = serde_json::from_str(&data?) {
+                out.push(v);
+            }
+        }
+        Ok(out)
+    }
+
+    /// id → `updated_at` of the stored PRs, to skip refetching unchanged ones.
+    pub fn pr_versions(&self, scope: &str) -> Result<std::collections::HashMap<String, Option<String>>> {
+        let mut st = self.db.prepare("SELECT id, updated_at FROM pr_item WHERE scope = ?1")?;
+        let rows = st.query_map(params![scope], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn put_pr<T: Serialize>(&self, scope: &str, id: &str, updated_at: Option<&str>, value: &T) -> Result<()> {
+        self.db.execute(
+            "INSERT OR REPLACE INTO pr_item (scope, id, updated_at, data) VALUES (?1, ?2, ?3, ?4)",
+            params![scope, id, updated_at, serde_json::to_string(value)?],
+        )?;
+        Ok(())
+    }
+
+    /// When the scope's last complete fetch started (RFC 3339).
+    pub fn pr_synced(&self, scope: &str) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row("SELECT synced_at FROM pr_sync WHERE scope = ?1", params![scope], |r| {
+                r.get(0)
+            })
+            .optional()?)
+    }
+
+    pub fn set_pr_synced(&self, scope: &str, at: &str) -> Result<()> {
+        self.db.execute(
+            "INSERT OR REPLACE INTO pr_sync (scope, synced_at) VALUES (?1, ?2)",
+            params![scope, at],
+        )?;
+        Ok(())
+    }
+
     pub fn record_timing(&self, stage: &str, units: u64, seconds: f64) -> Result<()> {
         if units > 0 {
             self.db.execute(
@@ -165,5 +226,23 @@ mod tests {
         c.record_timing("ingest", 3000, 2.5).unwrap();
         c.record_timing("ingest", 0, 9.0).unwrap();
         assert_eq!(c.cost("ingest").unwrap(), Some(0.00075));
+    }
+
+    #[test]
+    fn stores_prs_per_scope() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = Cache::open(&tmp.path().join("c.sqlite")).unwrap();
+        c.put_pr("s", "#1", Some("2025-01-01T00:00:00Z"), &1u32).unwrap();
+        c.put_pr("s", "#1", Some("2025-01-02T00:00:00Z"), &2u32).unwrap();
+        c.put_pr("s", "#2", None, &3u32).unwrap();
+        c.put_pr("other", "#1", None, &4u32).unwrap();
+        assert_eq!(c.prs::<u32>("s").unwrap(), vec![2, 3]);
+        assert_eq!(
+            c.pr_versions("s").unwrap()["#1"].as_deref(),
+            Some("2025-01-02T00:00:00Z")
+        );
+        assert_eq!(c.pr_synced("s").unwrap(), None);
+        c.set_pr_synced("s", "2025-02-01T00:00:00Z").unwrap();
+        assert_eq!(c.pr_synced("s").unwrap().as_deref(), Some("2025-02-01T00:00:00Z"));
     }
 }
