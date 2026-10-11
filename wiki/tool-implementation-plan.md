@@ -8,8 +8,8 @@ prototype (M3), and the PR flow from GitHub and GitLab (peer review, cycle time,
 mentoring) reproduces it too (M4). M5 (LLM classifier, Velocity) is **built** (2026-10-11): every
 provider, the confidence gate, `classifier eval`, Velocity end to end; its exit criterion (a remote and
 a local classifier passing the eval against the private reference set) is still to run, see §8. M6 (local
-fleet) is **built** (2026-10-11): `fleet.toml`, pooling, `pmx fleet serve|export`, the fleet page with
-drill-down; its exit criterion (the fleet of the three pilot projects) is still to run, see §8. Drafted
+fleet) is **done** (2026-10-11): `fleet.toml`, pooling, `pmx fleet serve|export`, the fleet page with
+drill-down, rebuilt from the three pilot projects' workspaces, see §8. Drafted
 2026-10-08, revised 2026-10-09 with owner decisions.
 **What** to measure is defined by [metrics-spec.md](metrics-spec.md) (source of truth). This page covers
 **how** to build the tool, which runs anywhere and shows its results in a web dashboard. Where this page
@@ -481,7 +481,7 @@ derived from schema answers. The rubric version bump (`six-axis@2`) invalidates 
 | **M3** ✓ 2026-10-09 | `pm-snapshot`: scc, jscpd, osv-scanner, gitleaks, semgrep; Quality with duplication; Security score; SAST trend; `doctor`, `tools install` | Quality and Security reproduced for all three projects. **Done:** every snapshot series exact in the parity replay for all three projects, and in the live tool runs ([parity.md](parity.md) §6); dashboard Security and Code health sections; `tests/snapshots.rs` covers the stage with fake tools |
 | **M4** ✓ 2026-10-11 | `pm-codehost`: GitHub + GitLab; peer review, cycle time, review wait, mentoring (unified expert rule, spec §8) | Spec §8 complete. **Done:** every PR series exact against the recorded GitLab responses and the GitHub export for all three projects in the prototype dialect; in the spec dialect the only deltas are the months with PRs by bots or externals, and mentoring pairs (the unified rule) ([parity.md](parity.md) §6); `tests/pulls.rs` covers the stage against a fake GitLab (incremental fetch, fallback to stored PRs, not measured); dashboard Peer review section; `pmx demo` has PRs |
 | **M5** | `pm-llm`: schema types, `jev`, `openai-compatible`, `anthropic` and `command` providers, data-policy guard, confidence gate, cache, `classifier eval`; Velocity on `six-axis@2` | At least one remote and one local classifier pass the eval |
-| **M6** | Local fleet: `fleet.toml`, aggregation, fleet dashboard | Fleet rebuilt from the three local project folders. **Built** 2026-10-11 (see "M6 progress"); the run on the three pilot projects is left |
+| **M6** ✓ 2026-10-11 | Local fleet: `fleet.toml`, aggregation, fleet dashboard | Fleet rebuilt from the three local project folders. **Done:** see "M6 progress" |
 | **M7** | Packaging, `init` wizard polish, docs | 15-minute onboarding verified by someone new |
 
 **M5 progress (2026-10-11).** Built: the schema types, the `six-axis@2` question set and the scoring in
@@ -506,8 +506,13 @@ drill-down in the dashboard app (D33), stale-project handling (D35), `pmx demo -
 `pm-metrics` unit tests for every pooling rule, `crates/pmx/tests/fleet.rs` (CLI export, exact pooling of
 two collected projects, missing project, serving, and the WASM engine against every bucket of
 `fleet.json`), dashboard tests (`src/fleet/FleetApp.test.tsx`). Checked on the fictional demo fleet in a
-browser. **Left for the exit criterion:** `pmx fleet export` over the three pilot workspaces (private; no
-`PMX_GOLDEN_DIR` on this machine), checked against their project dashboards.
+browser. **Exit run (2026-10-11):** three private workspaces made with `pmx import-config` from the golden
+set's pinned configs, each collected `--as-of 2026-09-30 --no-fetch` (month-end snapshots, all five tools,
+PRs where a token was available), then `pmx fleet export`. A script independent of pm-metrics recomputed
+every pooled monthly value from the three `project.json` files (sums, Σ value·n, worst Security, the
+attributing / PR subsets): no differences; the WASM engine reproduced every week and month of the real
+`fleet.json`, coverage included; the page shows each project's own numbers and links into its dashboard.
+Nothing from the run is in this repo.
 
 **Testing:**
 - **Synthetic fixture repos**, built by the tests themselves with scripted authors, dates and file trees

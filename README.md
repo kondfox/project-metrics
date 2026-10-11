@@ -4,8 +4,8 @@
 > the git-derived metrics (activity, rework, tests/docs-with-code, multi-stack, AI-assisted), the
 > snapshot metrics (duplication, complexity, dependency vulnerabilities, secrets, SAST) and the PR flow
 > from GitHub or GitLab (peer review, cycle time, review wait, mentoring) incrementally, reproduces the
-> private prototype, and shows a project dashboard. Velocity (M5, LLM-scored) and the local fleet view
-> (M6) are built and awaiting their exit checks. The design lives in the [wiki](wiki/README.md).
+> private prototype, and shows a project dashboard. The local fleet view (M6) is done; Velocity (M5,
+> LLM-scored) is built and awaiting its exit check. The design lives in the [wiki](wiki/README.md).
 
 ## Try it
 
