@@ -2,7 +2,13 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { DashboardProvider } from "./state/DashboardProvider";
-import { fixtureLeads, fixtureProject, fixtureWithPulls, fixtureWithSnapshots } from "./test/fixtures";
+import {
+  fixtureLeads,
+  fixtureProject,
+  fixtureWithPulls,
+  fixtureWithSnapshots,
+  fixtureWithVelocity,
+} from "./test/fixtures";
 
 // ECharts needs a real layout engine; the chart options are tested on their own.
 vi.mock("./components/charts/EChart", () => ({ EChart: () => <div data-testid="chart" /> }));
@@ -78,6 +84,24 @@ describe("<App>", () => {
     );
     expect(screen.getByRole("group", { name: "PR size" })).toHaveTextContent("not measured");
     expect(screen.getByText(/from GitLab \(2 repos\)/)).toBeInTheDocument();
+  });
+
+  it("shows Velocity and its work packages when a classifier scored them", () => {
+    const { unmount } = renderApp();
+    expect(screen.getAllByRole("group", { name: "Velocity" })[0]).toHaveTextContent("not measured");
+    unmount();
+    renderApp(fixtureWithVelocity());
+    const [headline, tile] = screen.getAllByRole("group", { name: "Velocity" });
+    expect(headline).toHaveTextContent("0.2points per FTE-day");
+    expect(headline).toHaveTextContent("points per FTE-day · 2 work packages");
+    expect(tile).toHaveTextContent("low n · 2");
+    expect(screen.getByRole("group", { name: "Points delivered" })).toHaveTextContent("9");
+    const table = screen.getByRole("table", { name: "Work packages" });
+    // September only, newest first.
+    expect(table).toHaveTextContent("SHOP-42 Order totals");
+    expect(table).toHaveTextContent("tidy the checkout form");
+    expect(table).not.toHaveTextContent("SHOP-40");
+    expect(screen.getByText(/six-axis@2 rubric by claude-code:claude-sonnet-5-5/)).toBeInTheDocument();
   });
 
   it("hides AI series when attribution is off", () => {

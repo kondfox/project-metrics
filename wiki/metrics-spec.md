@@ -240,6 +240,12 @@ only month-ends; `since` limits how far back trees are scanned.
    (distinct person-days with a commit), shown with a `~` marker.
 5. **Drill-down ratios:** `points / commit`, `points / KLOC added`. Also report **verification debt** =
    points where R6 ≥ 2 and the package touched no test file (feeds Quality reading, not Velocity).
+6. **FTE-days** (decided 2026-10-11) = Σ FTE over the business days of the range, up to `as_of` (the
+   §10.2 mean × business days). If any business day has no FTE, the range uses engineer-days and is marked
+   approximate. Commits and added lines in the ratios are the packages' own (source files only for lines).
+7. **Coverage** (decided 2026-10-11): a range that starts before scoring did (`[velocity] since`) or holds
+   an unscored package has no Velocity (null), never a partial sum. Commits by bots and externals are in
+   no package (§1.3).
 
 Per-person points exist only in the private lead drill-down — never a headline.
 
@@ -447,6 +453,8 @@ schema for every provider. Design: [tool-implementation-plan.md §6](tool-implem
 - **Low confidence:** re-ask once with reordered levels; then the configured fallback (if the data policy
   allows), flagged in the output.
 - No classifier configured → Velocity is `null` (not 0).
+- **Built providers (2026-10-11):** `claude-code` (the Claude Code CLI under the user's login, plan D26)
+  and `command`. The state lists files (≤ 200) and subjects (≤ 50) and carries no person names.
 
 ### 10.4 Code-host adapter (PR/MR)
 - Interface: `merged_prs(project, since, selection, until, files) → [{ id, author{login, name?, bot},
@@ -535,3 +543,8 @@ Values are unrounded; `null` means no data.
 | `pr_cycle_median_h`, `review_coverage_pct` | §8 | merged PRs |
 | `review_wait_median_h`, `mentoring_pairs` | §8 | reviewed PRs |
 | `pr_size_median` | §8; GitHub only | PRs with line counts |
+| `velocity` | §4: points per FTE-day (per engineer-day when `velocity_approx` = 1); absent when no classifier | work packages |
+| `velocity_approx` | §4: 1 when the denominator is engineer-days | — |
+| `velocity_points`, `verification_debt_pts` | §4 | work packages |
+| `velocity_packages` | §4: packages dated in the range, scored or not | — |
+| `points_per_commit`, `points_per_kloc` | §4, over the packages' commits and added source lines | commits · added lines |

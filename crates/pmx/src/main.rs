@@ -96,7 +96,13 @@ enum Command {
         /// Skip the snapshot stage (duplication, complexity, security).
         #[arg(long)]
         no_snapshots: bool,
+        /// Don't score work packages (Velocity is then not measured in this run).
+        #[arg(long)]
+        no_velocity: bool,
     },
+    /// The LLM classifiers that score work packages for Velocity.
+    #[command(subcommand)]
+    Classifier(ClassifierCommand),
     /// Which external snapshot tools are installed, and what is not measured without them.
     Doctor,
     /// Install the pinned scc, osv-scanner and gitleaks (checksum-verified) into pmx's tools folder.
@@ -187,6 +193,12 @@ enum RepoCommand {
     Remove {
         name: String,
     },
+}
+
+#[derive(Subcommand)]
+enum ClassifierCommand {
+    /// Score one small fictional work package with NAME, to check that it runs and is logged in.
+    Test { name: String },
 }
 
 #[derive(Subcommand)]
@@ -729,12 +741,14 @@ fn run(cli: Cli) -> Result<()> {
             full,
             progress,
             no_snapshots,
+            no_velocity,
         } => {
             let ws = Workspace::load(&ws_dir)?;
             let mut opts = run_options(&run);
             opts.use_cache = !no_cache;
             opts.incremental = !full;
             opts.snapshots = !no_snapshots;
+            opts.velocity = !no_velocity;
             let mode: Mode = progress.parse().map_err(anyhow::Error::msg)?;
             if dry_run {
                 cmd_plan(&ws, opts)?;
@@ -748,6 +762,28 @@ fn run(cli: Cli) -> Result<()> {
             cmd_plan(&ws, opts)?;
         }
         Command::Doctor => cmd_doctor(&ws_dir)?,
+        Command::Classifier(ClassifierCommand::Test { name }) => {
+            let ws = Workspace::load(&ws_dir)?;
+            eprintln!("asking `{name}` about a fictional package (a nullable field on an entity and its DTO)…");
+            let (axes, r, took) = pmx::velocity::smoke_test(&ws, &name)?;
+            let a = axes.0;
+            println!(
+                "ok in {:.1} s: model {}, R1–R6 = {} {} {} {} {} {}, {} ({} pts)",
+                took.as_secs_f64(),
+                r.model,
+                a[0],
+                a[1],
+                a[2],
+                a[3],
+                a[4],
+                a[5],
+                axes.size().0,
+                axes.points()
+            );
+            if let Some(u) = r.usage {
+                println!("input tokens: {}", u.input_tokens);
+            }
+        }
         Command::Tools(ToolsCommand::Install { force }) => {
             let bin = pmx::tools_dir().join("bin");
             for line in pmx::tools_install::install(&bin, force)? {

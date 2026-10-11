@@ -161,3 +161,46 @@ export function fixtureWithPulls(): ProjectFile {
   p.meta.pull_requests = { host: "gitlab", repos: ["shop-api", "shop-web"], sizes: false };
   return p;
 }
+
+/** The fixture with scored work packages; FTE unknown in September's second package's month. */
+export function fixtureWithVelocity(): ProjectFile {
+  const p = fixtureProject();
+  const m = (a: number | null, b: number | null) => [a, b];
+  Object.assign(p.series_monthly, {
+    velocity: m(0.31, 0.2),
+    velocity_approx: m(0, 0),
+    velocity_points: m(13, 9),
+    velocity_packages: m(6, 2),
+    points_per_commit: m(0.33, 0.17),
+    points_per_kloc: m(4.3, 2.2),
+    verification_debt_pts: m(5, 0),
+  });
+  Object.assign(p.n_monthly, { velocity: m(6, 2), velocity_points: m(6, 2) });
+  p.meta.not_measured = p.meta.not_measured.filter((x) => x !== "velocity");
+  const pkg = (id: string, date: string, points: number | null, description: string) => ({
+    id,
+    date,
+    repos: ["shop-api"],
+    commits: 3,
+    added: 120,
+    description,
+    axes: points == null ? null : ([2, 1, 2, 1, 1, 2] as [number, number, number, number, number, number]),
+    points,
+    size: points == null ? null : "M",
+    tests: true,
+    truncated: false,
+    classifier: "claude-code:claude-sonnet-5-5:pmx-prompt@1",
+    model: "claude-sonnet-5-5",
+  });
+  p.velocity = {
+    rubric: "six-axis@2",
+    classifiers: ["claude-code:claude-sonnet-5-5:pmx-prompt@1"],
+    options: { since: "2026-08-01", as_of: "2026-09-30", fte: [{ from: null, to: null, fte: 2 }] },
+    packages: [
+      pkg("SHOP-42", "2026-09-24", 3, "SHOP-42 Order totals honour regional tax rules"),
+      pkg("p1~2026-W37", "2026-09-10", 3, "tidy the checkout form"),
+      pkg("SHOP-40", "2026-08-20", 5, "SHOP-40 Customer nickname"),
+    ],
+  };
+  return p;
+}

@@ -22,6 +22,7 @@ use crate::cache::Cache;
 use crate::ingest::{IngestContext, RepoIngest, add_rework, ingest, splice_rework};
 use crate::pulls::{PULLS, PrSource, PullSettings};
 use crate::snapshots::{SNAPSHOTS, SnapshotRepo, SnapshotSettings, run_stage};
+use crate::velocity::{VELOCITY, VelocitySettings};
 
 fn snapshots_enabled(ws: &Workspace, opts: &CollectOptions) -> bool {
     opts.snapshots && ws.config.snapshots.enabled != Some(false)
@@ -36,12 +37,14 @@ pub const REWORK: &str = "rework";
 
 /// Seconds per unit before any run has been timed (one worker; measured on an Apple M-series
 /// laptop, generous on purpose).
-const DEFAULT_COST: [(&str, f64); 5] = [
+const DEFAULT_COST: [(&str, f64); 6] = [
     (FETCH, 2.0),
     (INGEST, 0.001),
     (REWORK, 0.0015),
     (SNAPSHOTS, 20.0),
     (PULLS, 0.3),
+    // One classifier call, divided by its default of 4 at a time.
+    (VELOCITY, 8.0),
 ];
 
 #[derive(Clone)]
@@ -58,6 +61,8 @@ pub struct CollectOptions {
     pub prototype_compat: bool,
     /// Run the snapshot stage (unless `[snapshots] enabled = false`).
     pub snapshots: bool,
+    /// Score work packages for Velocity (when a classifier is configured).
+    pub velocity: bool,
     /// The external tools; `None` = detect them.
     pub tools: Option<pm_snapshot::Tools>,
     /// Replay recorded osv-scanner output (see `snapshots::SnapshotSettings::osv_replay`).
@@ -79,6 +84,7 @@ impl CollectOptions {
             incremental: true,
             prototype_compat: false,
             snapshots: true,
+            velocity: true,
             tools: None,
             osv_replay: None,
             pull_requests: PrSource::Live,
@@ -329,6 +335,14 @@ pub fn plan_progress(ws: &Workspace, opts: &CollectOptions, plans: &[RepoPlan]) 
         p.skip(PULLS, "no [code_host]");
     } else {
         p.plan(PULLS, 0, 0, true);
+    }
+    p.add_stage(VELOCITY, "work packages", "packages", cost(VELOCITY)?);
+    if !crate::velocity::configured(ws) {
+        p.skip(VELOCITY, "no classifier");
+    } else if !opts.velocity {
+        p.skip(VELOCITY, "off");
+    } else {
+        p.plan(VELOCITY, 0, 0, true);
     }
     let fetches = plans.iter().filter(|r| r.needs_fetch).count() as u64;
     if fetches == 0 {
@@ -655,13 +669,42 @@ pub fn collect(ws: &Workspace, opts: &CollectOptions) -> Result<Collected> {
         let input = run_stage(&settings, &snap_repos, cadence, config.snapshots.jobs.unwrap_or(2))?;
         Ok(Some((input, tools)))
     };
-    let (snapshots, pulls) = std::thread::scope(|s| {
+    let velocity_settings = VelocitySettings {
+        ws,
+        as_of: opts.as_of,
+        classifier: &shared.classifier,
+        identity: &shared.identity,
+        use_cache: opts.use_cache,
+        progress: p.clone(),
+    };
+    let velocity_repos = crate::velocity::repos(ws, &plans);
+    let (snapshots, pulls, velocity) = std::thread::scope(|s| {
         let pulls = s.spawn(|| crate::pulls::run_stage(&pull_settings));
+        let velocity = s.spawn(|| {
+            if opts.velocity {
+                crate::velocity::run_stage(&velocity_settings, &velocity_repos)
+            } else {
+                Ok(None)
+            }
+        });
         let snapshots = run_snapshots();
-        (snapshots, pulls.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+        (
+            snapshots,
+            pulls.join().unwrap_or_else(|e| std::panic::resume_unwind(e)),
+            velocity.join().unwrap_or_else(|e| std::panic::resume_unwind(e)),
+        )
     });
     let snapshots = snapshots?;
     let pulls = pulls?;
+    let velocity = velocity?;
+    if let Some(v) = &velocity {
+        let vdays = pm_metrics::velocity::velocity_days(&v.packages);
+        let window: Days = vdays
+            .range(range_start..=opts.as_of)
+            .map(|(d, day)| (*d, day.clone()))
+            .collect();
+        merge_days(&mut days, &window);
+    }
     if let Some(pulls) = &pulls {
         let inputs = crate::pulls::inputs(
             &pulls.repos,
@@ -710,6 +753,7 @@ pub fn collect(ws: &Workspace, opts: &CollectOptions) -> Result<Collected> {
         },
         snapshots: snapshots.map(|(input, _)| input).unwrap_or_default(),
         pulls: pulls.map(|p| p.info),
+        velocity,
     });
     Ok(Collected {
         project,

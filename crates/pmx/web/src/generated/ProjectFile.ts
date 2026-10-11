@@ -6,7 +6,7 @@ import type { ProjectInfo } from "./ProjectInfo";
 import type { RepoHotspots } from "./RepoHotspots";
 import type { SecurityDetail } from "./SecurityDetail";
 import type { SnapshotPoint } from "./SnapshotPoint";
-import type { JsonValue } from "./serde_json/JsonValue";
+import type { VelocityDetail } from "./VelocityDetail";
 
 export type ProjectFile = { schema: string, project: ProjectInfo, 
 /**
@@ -17,4 +17,8 @@ days: Record<string, unknown>,
 /**
  * Pooled snapshot per measured date (week-ends, month-ends, the as-of tip).
  */
-snapshots: { [key in string]: SnapshotPoint }, weeks: Array<string>, months: Array<string>, series_weekly: { [key in string]: Array<number | null> }, n_weekly: { [key in string]: Array<number | null> }, series_monthly: { [key in string]: Array<number | null> }, n_monthly: { [key in string]: Array<number | null> }, detail: { [key in string]: Detail }, ai_compare: AiCompare | null, security: SecurityDetail | null, hotspots: Array<RepoHotspots>, velocity: JsonValue | null, meta: Meta, };
+snapshots: { [key in string]: SnapshotPoint }, weeks: Array<string>, months: Array<string>, series_weekly: { [key in string]: Array<number | null> }, n_weekly: { [key in string]: Array<number | null> }, series_monthly: { [key in string]: Array<number | null> }, n_monthly: { [key in string]: Array<number | null> }, detail: { [key in string]: Detail }, ai_compare: AiCompare | null, security: SecurityDetail | null, hotspots: Array<RepoHotspots>, 
+/**
+ * `None` = not measured (no classifier configured).
+ */
+velocity: VelocityDetail | null, meta: Meta, };

@@ -646,6 +646,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pm-llm"
+version = "0.1.0"
+dependencies = [
+ "pm-config",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
 name = "pm-metrics"
 version = "0.1.0"
 dependencies = [
@@ -702,9 +714,11 @@ dependencies = [
  "pm-codehost",
  "pm-config",
  "pm-git",
+ "pm-llm",
  "pm-metrics",
  "pm-progress",
  "pm-snapshot",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",

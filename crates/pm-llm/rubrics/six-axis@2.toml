@@ -1,0 +1,111 @@
+# The six-axis work-item complexity rubric as a question set (plan §6.4, spec §10.3).
+#
+# Derived from six-axis@1.md: the anchors are unchanged. Counting and arithmetic stay in pmx:
+# - R1 = the number of layer questions answered yes (p ≥ 0.5): 1 → 0, 2 → 1, 3–4 → 2, 5+ → 3
+#   (no layer at all is 0 too).
+# - R2, R3, R4, R6 = the most likely level, but the lower of two levels is taken when
+#   P(lower) ≥ P(top) − delta ("when two anchors both fit, take the LOWER one").
+# - R5 = 3 when `r5_app_wide` is yes; else 0 for one file, 1 for one module, 2 for several modules,
+#   counted from the changed files (a module is the file's repo and its first two directories).
+#
+# Never edit anchors or instructions after scoring: any change is a new version (six-axis@3).
+
+id = "six-axis@2"
+delta = 0.1
+
+context = """
+You judge one work package: the commits that delivered one ticket, or one developer's untracked \
+commits in one week. The state lists its commit subjects, the files changed (with their class and \
+stack role) and the diff, with generated files removed. Judge only what the diff delivers. \
+Diff size never raises an answer: a 40-line change to an ordering rule used by every list query \
+outranks a 900-line change that adds one CRUD endpoint. Score delivered work, not effort. If the \
+diff is marked truncated, judge the part you can see together with the file list."""
+
+[[question]]
+id = "layer_transport"
+type = "noul"
+instructions = "Does the change touch the transport or DTO layer: request and response shapes, controllers, route handlers, API clients, serializers or message formats?"
+
+[[question]]
+id = "layer_validation"
+type = "noul"
+instructions = "Does the change touch input validation: validators, validation attributes or schemas, guards that reject bad input?"
+
+[[question]]
+id = "layer_service"
+type = "noul"
+instructions = "Does the change touch the service or application layer: use cases, services, handlers that orchestrate work?"
+
+[[question]]
+id = "layer_domain"
+type = "noul"
+instructions = "Does the change touch the domain layer: entities' behaviour, domain rules, value objects, business invariants?"
+
+[[question]]
+id = "layer_persistence"
+type = "noul"
+instructions = "Does the change touch persistence code: repositories, ORM entity mappings, queries, data-access code?"
+
+[[question]]
+id = "layer_database"
+type = "noul"
+instructions = "Does the change touch database objects: migrations, tables, views, stored procedures, indexes, SQL schema?"
+
+[[question]]
+id = "layer_ui"
+type = "noul"
+instructions = "Does the change touch the user interface: components, screens, views, templates, styles, UI state?"
+
+[[question]]
+id = "layer_navigation"
+type = "noul"
+instructions = "Does the change touch navigation: routes, menus, deep links, screen-to-screen flow?"
+
+[[question]]
+id = "r2_data_model"
+type = "score"
+instructions = "What does the change do to persistent structure (database schema, stored documents, persisted entities)? When two levels both fit, choose the lower one."
+criteria = [
+  "No schema change.",
+  "A field or column added or altered on an existing structure.",
+  "A new table, entity, view, stored procedure or enum type.",
+  "A structural rewrite, a destructive change, or a migration that backfills or transforms existing rows.",
+]
+
+[[question]]
+id = "r3_contract"
+type = "score"
+instructions = "What changes for a consumer outside the module (another service, a client app, a user, an external system)? When two levels both fit, choose the lower one."
+criteria = [
+  "Nothing externally visible.",
+  "A field added to an existing contract.",
+  "A new endpoint, screen, dialog or command.",
+  "A breaking change to an existing contract, or a new interface to an external system.",
+]
+
+[[question]]
+id = "r4_algorithmic"
+type = "score"
+instructions = "How much real reasoning lives in the changed code? When two levels both fit, choose the lower one."
+criteria = [
+  "CRUD, declarative wiring, configuration.",
+  "Conditional logic, branching, simple derivation.",
+  "A non-trivial algorithm: query composition, a parser, a sort or ordering rule, three-valued or nullable-as-unknown logic, a non-obvious state machine.",
+  "An invariant that must hold in several places at once, concurrency or async coordination, or an external protocol you do not control.",
+]
+
+[[question]]
+id = "r5_app_wide"
+type = "noul"
+instructions = "Does the change alter application-wide behaviour: authentication or authorization, data sync, the schema, an ordering or filtering rule applied everywhere, or the build and release process?"
+
+[[question]]
+id = "r6_verification"
+type = "score"
+instructions = "What would it take to be confident this change is correct? Judge the need, not whether tests were written. When two levels both fit, choose the lower one."
+criteria = [
+  "Correctness is visible at a glance.",
+  "A manual check is enough.",
+  "A unit test is required.",
+  "An integration, migration or end-to-end test is required.",
+]

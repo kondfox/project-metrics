@@ -1,11 +1,11 @@
 import { MeasuredTile } from "../components/tiles/MeasuredTile";
 import { MetricTile } from "../components/tiles/MetricTile";
-import { NotMeasuredTile } from "../components/tiles/NotMeasuredTile";
 import { QualityTile, SecurityTile } from "../components/tiles/ScoreTile";
 import { Tile, TileGrid } from "../components/tiles/Tile";
 import { Section } from "../components/ui/Section";
 import { formatNumber, formatPercent } from "../lib/format";
 import { useDashboard } from "../state/hooks";
+import { velocityNote } from "./VelocitySection";
 
 /** The fleet headlines for this project (fleet-vision.md). */
 export function HeadlineSection() {
@@ -30,7 +30,7 @@ export function HeadlineSection() {
             note="not tracked: AI trailers are stripped by policy"
           />
         )}
-        <NotMeasuredTile id="velocity" />
+        <MeasuredTile input="velocity" id="velocity" note={velocityNote} />
         <SecurityTile />
         <MeasuredTile
           input="peer_review"

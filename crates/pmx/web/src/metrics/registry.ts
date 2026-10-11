@@ -127,6 +127,45 @@ export const METRICS = {
     description: "KLOC (scc, generated folders excluded)",
     spec: "§3.5",
   },
+  velocity: {
+    label: "Velocity",
+    unit: "ratio",
+    decimals: 2,
+    description: "six-axis points per FTE-day",
+    nCounts: "work packages",
+    spec: "§4",
+  },
+  velocity_points: {
+    label: "Points delivered",
+    unit: "count",
+    description: "Fibonacci points of the work packages dated in the range",
+    nCounts: "work packages",
+    spec: "§4",
+  },
+  velocity_packages: { label: "Work packages", unit: "count", spec: "§4" },
+  points_per_commit: {
+    label: "Points per commit",
+    unit: "ratio",
+    decimals: 2,
+    description: "is each unit of activity getting harder, or just more frequent?",
+    nCounts: "commits",
+    spec: "§4",
+  },
+  points_per_kloc: {
+    label: "Points per KLOC",
+    unit: "ratio",
+    decimals: 1,
+    description: "complexity density: falling while lines rise is volume without value",
+    nCounts: "added lines",
+    spec: "§4",
+  },
+  verification_debt_pts: {
+    label: "Verification debt",
+    unit: "count",
+    description: "points of work that needs a unit test or more (R6 ≥ 2) but touched no test",
+    nCounts: "work packages",
+    spec: "§4",
+  },
   security_score: {
     label: "Security",
     unit: "score",
@@ -235,7 +274,10 @@ export function metricDef(id: MetricId): MetricDef {
  * collected (`meta.not_measured`, written by pmx).
  */
 export const NOT_MEASURED = {
-  velocity: { label: "Velocity", needs: "the LLM classifier (M5)" },
+  velocity: {
+    label: "Velocity",
+    needs: "a classifier: [classifiers] and [velocity] in pmx.toml (`pmx classifier test <name>`)",
+  },
   peer_review: {
     label: "Peer review",
     needs: "code-host data: [code_host], a code_host_id per repo and a token (`pmx check`)",
@@ -251,9 +293,6 @@ export const NOT_MEASURED = {
 
 export type NotMeasuredId = keyof typeof NOT_MEASURED;
 
-/** Inputs that are always missing in this version (later milestones). */
-const NOT_BUILT: readonly NotMeasuredId[] = ["velocity"];
-
 export function isMeasured(notMeasured: readonly string[], id: NotMeasuredId): boolean {
-  return !NOT_BUILT.includes(id) && !notMeasured.includes(id);
+  return !notMeasured.includes(id);
 }

@@ -14,6 +14,7 @@ pm-classify = { path = "crates/pm-classify" }
 pm-codehost = { path = "crates/pm-codehost" }
 pm-config = { path = "crates/pm-config" }
 pm-git = { path = "crates/pm-git" }
+pm-llm = { path = "crates/pm-llm" }
 pm-metrics = { path = "crates/pm-metrics" }
 pm-progress = { path = "crates/pm-progress" }
 pm-snapshot = { path = "crates/pm-snapshot" }

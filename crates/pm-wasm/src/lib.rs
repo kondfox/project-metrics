@@ -7,7 +7,7 @@
 //!
 //! Requests:
 //! - `{"op": "load", "days": {…}, "snapshots": {…}, "breadth_roles": […], "ai_attribution": bool,
-//!   "pull_requests": meta.pull_requests}` → `{"mix_roles": […]}`
+//!   "pull_requests": meta.pull_requests, "velocity": velocity.options}` → `{"mix_roles": […]}`
 //! - `{"op": "range", "start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}` →
 //!   `Metrics` (`{values, n, stack_mix, leaders}`; TypeScript type in crates/pmx/web/src/generated)
 //!
@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 
 use pm_metrics::model::{PullsInfo, mix_roles};
 use pm_metrics::snapshot::{SnapshotPoint, at_or_before};
+use pm_metrics::velocity::VelocityOptions;
 use pm_metrics::{Days, MetricOptions, aggregate, metrics};
 use serde::Deserialize;
 use serde_json::json;
@@ -46,6 +47,8 @@ enum Request {
         ai_attribution: bool,
         #[serde(default)]
         pull_requests: Option<PullsInfo>,
+        #[serde(default)]
+        velocity: Option<VelocityOptions>,
     },
     Range {
         start: NaiveDate,
@@ -63,6 +66,7 @@ pub fn handle(request: &str) -> String {
             breadth_roles,
             ai_attribution,
             pull_requests,
+            velocity,
         }) => {
             let roles = mix_roles(&days);
             let reply = json!({ "mix_roles": roles });
@@ -74,6 +78,7 @@ pub fn handle(request: &str) -> String {
                         mix_roles: roles,
                         pull_requests: pull_requests.is_some(),
                         pr_size: pull_requests.is_some_and(|p| p.sizes),
+                        velocity,
                     },
                     days,
                     snapshots,
@@ -88,6 +93,8 @@ pub fn handle(request: &str) -> String {
                     &aggregate(&st.days, start, end),
                     &st.opts,
                     at_or_before(&st.snapshots, end),
+                    start,
+                    end,
                 );
                 serde_json::to_value(&m).expect("metrics serialize")
             }
@@ -174,5 +181,25 @@ mod tests {
         assert_eq!(r["values"]["commits"], json!(2.0));
         assert_eq!(r["values"]["added"], json!(95.0));
         assert_eq!(r["n"]["commit_med"], json!(2));
+        assert!(r["values"].get("velocity").is_none(), "not measured: left out");
+    }
+
+    #[test]
+    fn velocity_over_a_custom_range() {
+        let mut d = days();
+        d.get_mut(&NaiveDate::from_ymd_opt(2025, 1, 6).unwrap())
+            .unwrap()
+            .velocity
+            .points = 6;
+        d.get_mut(&NaiveDate::from_ymd_opt(2025, 1, 6).unwrap())
+            .unwrap()
+            .velocity
+            .packages = 1;
+        let load = json!({"op": "load", "days": d, "breadth_roles": ["backend"], "ai_attribution": false,
+            "velocity": {"since": "2025-01-01", "as_of": "2025-03-01", "fte": [{"from": null, "to": null, "fte": 1.5}]}});
+        call(load);
+        // Mon 6 – Fri 10 January: 5 business days × 1.5 FTE.
+        let r = call(json!({"op": "range", "start": "2025-01-06", "end": "2025-01-12"}));
+        assert_eq!(r["values"]["velocity"], json!(6.0 / 7.5));
     }
 }

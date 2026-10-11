@@ -48,11 +48,11 @@ pub struct Config {
     pub secrets_triage: Vec<SecretsTriage>,
     #[serde(default, skip_serializing_if = "Snapshots::is_default")]
     pub snapshots: Snapshots,
-    /// LLM classifiers (spec §10.3). Parsed in M5; kept verbatim until then.
+    /// LLM classifiers by name (spec §10.3, plan §6.3).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub classifiers: BTreeMap<String, toml::Table>,
+    pub classifiers: BTreeMap<String, ClassifierConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub velocity: Option<toml::Table>,
+    pub velocity: Option<Velocity>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -280,6 +280,77 @@ pub enum SnapshotCadence {
     Monthly,
 }
 
+/// One `[classifiers.<name>]` (plan §6.2–6.3).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClassifierConfig {
+    pub provider: Provider,
+    /// Pin a versioned model id: it is part of the answer cache key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_env: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// `command`: the program and its arguments; `claude-code`: the `claude` executable (default
+    /// `claude` on PATH).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_gate: Option<f64>,
+    /// Classifier to use when an answer stays below the gate (only if the data policy allows it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub samples: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub isolate_questions: Option<bool>,
+    /// Packages classified at the same time (default 4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jobs: Option<usize>,
+    /// Seconds before one call is abandoned (default 300).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
+}
+
+/// Classifier providers (plan §6.2). `claude-code` runs the Claude Code CLI (`claude -p`) under the
+/// user's own login, so a Claude subscription can classify without an API key (D26).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Provider {
+    Jev,
+    OpenaiCompatible,
+    Anthropic,
+    #[default]
+    Command,
+    ClaudeCode,
+}
+
+impl Provider {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Provider::Jev => "jev",
+            Provider::OpenaiCompatible => "openai-compatible",
+            Provider::Anthropic => "anthropic",
+            Provider::Command => "command",
+            Provider::ClaudeCode => "claude-code",
+        }
+    }
+}
+
+/// `[velocity]` (spec §4).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Velocity {
+    /// The project's default classifier (a `[classifiers]` name); a repo can override it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classifier: Option<String>,
+    /// First date to score (default: `range_start`). Scoring is the slow, paid step, so this limits
+    /// how much history is sent; Velocity is null before it.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_date_str")]
+    pub since: Option<NaiveDate>,
+}
+
 /// `[people]`: canonical name → emails and code-host logins, plus `bots` and `externals`
 /// (spec §1.3, §10.1).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -386,6 +457,31 @@ impl Config {
                 _ => {}
             }
         }
+        for (name, c) in &self.classifiers {
+            if let Some(f) = &c.fallback {
+                if !self.classifiers.contains_key(f) {
+                    return bad(format!("[classifiers.{name}] fallback `{f}` is not a classifier"));
+                }
+            }
+            if c.provider == Provider::Command && c.command.as_ref().is_none_or(|v| v.is_empty()) {
+                return bad(format!("[classifiers.{name}] provider = \"command\" needs `command`"));
+            }
+        }
+        let named = |what: String, n: &str| {
+            if self.classifiers.contains_key(n) {
+                Ok(())
+            } else {
+                bad(format!("{what} names unknown classifier `{n}`"))
+            }
+        };
+        if let Some(n) = self.velocity.as_ref().and_then(|v| v.classifier.as_deref()) {
+            named("[velocity] classifier".into(), n)?;
+        }
+        for r in &self.repos {
+            if let Some(n) = &r.classifier {
+                named(format!("repo `{}`", r.display_name()), n)?;
+            }
+        }
         for t in &self.secrets_triage {
             if !names.contains(&t.repo) {
                 return bad(format!("[[secrets_triage]] names unknown repo `{}`", t.repo));
@@ -406,6 +502,13 @@ impl Config {
 
     pub fn classifier(&self, tests: pm_classify::TestRules) -> pm_classify::Classifier {
         pm_classify::Classifier::new(tests, self.role_rules.clone().unwrap_or_default())
+    }
+
+    /// The classifier that scores `repo`'s work packages: its own, else `[velocity] classifier`.
+    pub fn classifier_for<'a>(&'a self, repo: &'a RepoConfig) -> Option<&'a str> {
+        repo.classifier
+            .as_deref()
+            .or(self.velocity.as_ref().and_then(|v| v.classifier.as_deref()))
     }
 
     pub fn to_toml(&self) -> String {
@@ -483,6 +586,9 @@ mod tests {
         assert_eq!(cfg.people.bots, vec!["gitlab-runner@example.com"]);
         assert_eq!(cfg.people.externals, vec!["Sam Contractor"]);
         assert!(cfg.project.ai_attribution);
+        assert_eq!(cfg.classifiers["claude"].provider, Provider::ClaudeCode);
+        assert_eq!(cfg.classifier_for(&cfg.repos[0]), Some("claude"));
+        assert_eq!(cfg.classifier_for(&cfg.repos[2]), Some("local"));
     }
 
     #[test]
@@ -518,6 +624,15 @@ mod tests {
                 .contains("listed for both")
         );
         assert!(err("[[repo]]\npath = \"a\"\nrole = \"qa\"\nbogus = 1\n").contains("bogus"));
+        let repo = "[[repo]]\npath = \"a\"\nrole = \"qa\"\n";
+        assert!(err(&format!("{repo}[velocity]\nclassifier = \"x\"\n")).contains("unknown classifier `x`"));
+        assert!(err(&format!("{repo}[classifiers.c]\nprovider = \"command\"\n")).contains("needs `command`"));
+        assert!(
+            err(&format!(
+                "{repo}[classifiers.c]\nprovider = \"claude-code\"\nfallback = \"d\"\n"
+            ))
+            .contains("fallback `d`")
+        );
     }
 
     #[test]

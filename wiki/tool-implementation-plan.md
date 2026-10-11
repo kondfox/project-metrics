@@ -5,7 +5,9 @@
 (M1b), one project is viewable end to end in the dashboard (M2), the snapshot metrics (duplication,
 complexity, dependency vulnerabilities, secrets, SAST, hotspots, the Security score) reproduce the
 prototype (M3), and the PR flow from GitHub and GitLab (peer review, cycle time, review wait, PR size,
-mentoring) reproduces it too (M4). M5 (LLM classifier, Velocity) is next. Drafted 2026-10-08, revised
+mentoring) reproduces it too (M4). M5 (LLM classifier, Velocity) is **in progress** (2026-10-11): the
+schema, the `six-axis@2` question set, the `claude-code` and `command` providers, the velocity stage and
+Velocity in the dashboard are built; see §8 for what is left. Drafted 2026-10-08, revised
 2026-10-09 with owner decisions.
 **What** to measure is defined by [metrics-spec.md](metrics-spec.md) (source of truth). This page covers
 **how** to build the tool, which runs anywhere and shows its results in a web dashboard. Where this page
@@ -45,6 +47,8 @@ in the browser. A second command combines several projects into the **fleet view
 | D22 | **`pmx tools install`** downloads the pinned scc, osv-scanner and gitleaks from their GitHub releases into the user cache (`PMX_TOOLS_DIR` overrides) and refuses any download whose SHA-256 differs from the digest compiled into pmx. semgrep and jscpd stay user-installed (`pmx doctor` says how) | 2026-10-09 |
 | D23 | ~~No bundled SAST rules yet~~ **Superseded by D24** | 2026-10-09 |
 | D24 | **Our own SAST rules, `pmx-sast@1`** (owner decision): 34 rules written from scratch under MIT OR Apache-2.0, bundled in the binary and used unless a project configures others. Precision over coverage (SAST is a trend); semgrep tests and a duplicate check in CI; versioned (any change is `@2`). Checked against the three pilot projects: 7 findings, all plausible, after excluding migrations from the SQL rules | 2026-10-11 |
+| D26 | **`claude-code` provider** (owner decision): runs the Claude Code CLI (`claude -p`) under the user's own login, so a Claude subscription can classify without an API key. Output forced with `--json-schema` (the generated schema of §6.2), no tools, no settings, no session, from an empty temp folder. Not local (the guard refuses it for `local-only` repos). One answer per question, so `confidence_source = "none"`. The model that answered is read from the CLI's `modelUsage` and recorded per package; `pmx check` warns when `model` is an alias (`sonnet`) instead of a versioned id. `pmx classifier test <name>` scores one fictional package to check the login | 2026-10-11 |
+| D27 | **Velocity stage rules** (M5): a package goes to the classifier of its `local-only` repo if it has one, else of its first repo; a package the guard refuses or a call that fails stays **unscored**, and any week or month holding an unscored package has no Velocity (null, never a partial sum). After 3 failures in a row a classifier gets no more packages in that run (an expired login fails every call). Answers are cached by content (§2.2) and kept across `--full`; `--no-cache` re-pays. `[velocity] since` limits how much history is scored; ranges starting earlier are null. The state carries no person names (the ticket id only); author-week ids are pseudonymized in `project.json` | 2026-10-11 |
 | D25 | **Code-host adapters** (`pm-codehost`): GitHub over **GraphQL** (one request per 25 PRs with reviews, and files for per-file repos; no `gh` needed), GitLab over REST (MR list, then notes four at a time). HTTP sits behind a small `Http` trait, so tests use fakes and the parity harness replays the golden set's recorded responses by request path | 2026-10-11 |
 | D26 | **PRs are fetched incrementally and stored one by one** in the cache: ask for PRs *updated* since the last complete fetch minus 24 h, skip those stored at the same `updated_at`. A fetch that fails falls back to the stored PRs with a warning; a repo with nothing stored makes the whole PR layer "not measured" rather than undercounting. A run `--as-of` a past date skips later merges and is not recorded as a fetch | 2026-10-11 |
 | D27 | **Expert status over a trailing year** (spec §8): ≥ 3 PRs and ≥ 25% of the stack's top author, counted over PRs merged in the 365 days before each PR's merge date, so a month's mentoring pairs never change when newer PRs arrive. Logins resolve through `[people]`, so a reviewer is "another person", not just another login | 2026-10-11 |
@@ -325,7 +329,8 @@ provider produced them.
 | `jev` | Passes the request through to `POST https://api.typesafe.ai/v1/systemone` (raw HTTP via `reqwest`; there is no Rust SDK). Retries 429/529 with backoff |
 | `openai-compatible` (Ollama, vLLM, llama.cpp, LM Studio, OpenAI) | Renders the questions into a fixed prompt template. Forces the output with a **JSON schema generated from the question set** (an enum of levels or options per question; a 0–1 number for Noul). Probabilities come from token logprobs where available |
 | `anthropic` | Same template and generated schema, enforced through structured output |
-| `command` | Any executable that reads the request JSON on stdin and writes the response JSON on stdout. This is the escape hatch for custom local classifiers |
+| `command` | Any executable that reads the request JSON on stdin (plus a `context` field: the rubric's shared instructions) and writes the response JSON on stdout. This is the escape hatch for custom local classifiers |
+| `claude-code` | The Claude Code CLI under the user's login (D26): same template and generated schema, forced with `--json-schema`. Built in M5 |
 
 **Probabilities and confidence.** Only Jev returns calibrated probabilities. Other providers fill them
 from logprobs, from sampling the question k times (`samples = k`), or from a single answer
@@ -354,6 +359,11 @@ provider = "anthropic"
 model = "claude-sonnet-5-5"
 api_key_env = "ANTHROPIC_API_KEY"
 
+[classifiers.sub]
+provider = "claude-code"        # Claude Code CLI, your own login (D26)
+model = "claude-sonnet-5-5"
+jobs = 4                        # packages classified at once
+
 [classifiers.local]
 provider = "openai-compatible"
 base_url = "http://localhost:11434/v1"
@@ -380,7 +390,8 @@ data_policy = "local-only"      # hard guard
 ### 6.4 Velocity scoring with the shared schema
 
 The six-axis rubric ([`rubrics/six-axis@1.md`](../rubrics/six-axis@1.md)) becomes a
-versioned **question set**, `rubrics/six-axis@2.toml`. Jev's documented weak spots
+versioned **question set**, [`six-axis@2.toml`](../crates/pm-llm/rubrics/six-axis@2.toml) (bundled in
+the `pm-llm` crate so the binary always scores with the version it reports). Jev's documented weak spots
 ([jev-1.13 jaggedness](https://docs.typesafe.ai/model-jaggedness/jev-1.13.md)) are unreliable counting,
 poorly calibrated in-between scores, dates and arithmetic, and lower accuracy when the input contains
 irrelevant text. The design therefore keeps counting and arithmetic in code:
@@ -389,7 +400,7 @@ irrelevant text. The design therefore keeps counting and arithmetic in code:
 |---|---|---|
 | R1 layers | One **Noul** per named layer: transport/DTO, validation, service, domain, persistence, database object, UI, navigation | Count layers with p ≥ 0.5 → 1 = 0, 2 = 1, 3–4 = 2, 5+ = 3 |
 | R2 data model · R3 contract · R4 algorithmic · R6 verification | One **Score** each, 4 levels from the rubric anchors, plus examples from the golden set | Most likely level, with the rubric's "when two anchors fit, take the lower" rule: choose the lower level if `P(lower) ≥ P(top) − δ` |
-| R5 blast radius | Files and modules touched, counted in code, plus a **Noul**: "touches auth, sync, schema, ordering/filtering applied everywhere, or build/release?" | Yes → 3; else 0/1/2 from the file and module counts |
+| R5 blast radius | Files and modules touched, counted in code, plus a **Noul**: "touches auth, sync, schema, ordering/filtering applied everywhere, or build/release?" | Yes → 3; else one file → 0, one module → 1, several → 2. A module is the file's repo plus its first two directories; files excluded from the diff don't count |
 | Sum, size, points, verification debt | none | In code (spec §4, unchanged) |
 
 **State:** the package's subjects, the files changed with their class and role, and the diff filtered
@@ -453,6 +464,16 @@ derived from schema answers. The rubric version bump (`six-axis@2`) invalidates 
 | **M3** ✓ 2026-10-09 | `pm-snapshot`: scc, jscpd, osv-scanner, gitleaks, semgrep; Quality with duplication; Security score; SAST trend; `doctor`, `tools install` | Quality and Security reproduced for all three projects. **Done:** every snapshot series exact in the parity replay for all three projects, and in the live tool runs ([parity.md](parity.md) §6); dashboard Security and Code health sections; `tests/snapshots.rs` covers the stage with fake tools |
 | **M4** ✓ 2026-10-11 | `pm-codehost`: GitHub + GitLab; peer review, cycle time, review wait, mentoring (unified expert rule, spec §8) | Spec §8 complete. **Done:** every PR series exact against the recorded GitLab responses and the GitHub export for all three projects in the prototype dialect; in the spec dialect the only deltas are the months with PRs by bots or externals, and mentoring pairs (the unified rule) ([parity.md](parity.md) §6); `tests/pulls.rs` covers the stage against a fake GitLab (incremental fetch, fallback to stored PRs, not measured); dashboard Peer review section; `pmx demo` has PRs |
 | **M5** | `pm-llm`: schema types, `jev`, `openai-compatible`, `anthropic` and `command` providers, data-policy guard, confidence gate, cache, `classifier eval`; Velocity on `six-axis@2` | At least one remote and one local classifier pass the eval |
+
+**M5 progress (2026-10-11).** Built: the schema types, the `six-axis@2` question set and the scoring in
+code (§6.4), the `claude-code` (D26) and `command` providers, the data-policy guard on the typed config,
+work packages and filtered diffs, the answer cache, Velocity and its ratios in `pm-metrics` and the WASM
+engine (FTE-days from `[fte]`, engineer-days fallback), the dashboard tile, section and package table,
+`pmx classifier test`, `collect --no-velocity`. Tested with a fake `command` classifier
+(`crates/pmx/tests/velocity.rs`). Left: the `jev`, `openai-compatible` and `anthropic` providers; the
+confidence gate (re-ask with reordered levels, then `fallback`), `samples` and `isolate_questions`;
+`classifier eval` against the golden set; per-person points in `leads.json`; a live run with a real
+classifier.
 | **M6** | Local fleet: `fleet.toml`, aggregation, fleet dashboard | Fleet rebuilt from the three local project folders |
 | **M7** | Packaging, `init` wizard polish, docs | 15-minute onboarding verified by someone new |
 

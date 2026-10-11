@@ -1,6 +1,6 @@
 //! `.pmx/cache.sqlite` (plan §2.2): each repo's stage results keyed by `(repo, stage, settings)`
-//! with the tip SHA they were computed at, snapshot tool results, merged PRs, plus per-stage
-//! timings for the ETA.
+//! with the tip SHA they were computed at, snapshot tool results, merged PRs, classifier answers,
+//! plus per-stage timings for the ETA.
 //!
 //! A result is written as soon as its repo finishes the stage, so an interrupted run loses at
 //! most the stages in flight. The next run continues from the stored SHA when the new tip descends
@@ -57,6 +57,10 @@ impl Cache {
              CREATE TABLE IF NOT EXISTS pr_sync (
                 scope TEXT PRIMARY KEY,
                 synced_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS llm_answer (
+                key TEXT PRIMARY KEY,
+                data TEXT NOT NULL
              );
              CREATE TABLE IF NOT EXISTS timing (
                 stage TEXT NOT NULL,
@@ -173,6 +177,24 @@ impl Cache {
         self.db.execute(
             "INSERT OR REPLACE INTO pr_sync (scope, synced_at) VALUES (?1, ?2)",
             params![scope, at],
+        )?;
+        Ok(())
+    }
+
+    /// A classifier's answer for one work package (key: `velocity::answer_key`). Answers are
+    /// paid for, so they are kept across `--full` runs.
+    pub fn answer<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>> {
+        let data: Option<String> = self
+            .db
+            .query_row("SELECT data FROM llm_answer WHERE key = ?1", params![key], |r| r.get(0))
+            .optional()?;
+        Ok(data.and_then(|d| serde_json::from_str(&d).ok()))
+    }
+
+    pub fn put_answer<T: Serialize>(&self, key: &str, value: &T) -> Result<()> {
+        self.db.execute(
+            "INSERT OR REPLACE INTO llm_answer (key, data) VALUES (?1, ?2)",
+            params![key, serde_json::to_string(value)?],
         )?;
         Ok(())
     }

@@ -6,12 +6,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::NaiveDate;
 use pm_classify::Role;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::day::{Day, Days, aggregate};
 use crate::metrics::{AiCompare, Leader, MetricOptions, ai_compare, metrics};
 use crate::period::{Bucket, last_complete_month, months, partial_month, partial_week, weeks};
 use crate::snapshot::{SnapshotPoint, VulnPackage, at_or_before, sast_diff};
+use crate::velocity::{Package, VelocityOptions};
 
 pub const PROJECT_SCHEMA: &str = "pmx.project/1";
 pub const LEADS_SCHEMA: &str = "pmx.leads/1";
@@ -62,6 +62,21 @@ pub struct Meta {
     pub pull_requests: Option<PullsInfo>,
 }
 
+/// The scored work packages behind Velocity (spec §4, §10.3).
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct VelocityDetail {
+    /// Question set version, e.g. `six-axis@2`.
+    pub rubric: String,
+    /// Every classifier that fed this file (`provider:model:template`): scores from different
+    /// models are not strictly comparable.
+    pub classifiers: Vec<String>,
+    /// What the dashboard engine needs to recompute a custom range.
+    pub options: VelocityOptions,
+    /// Newest first.
+    pub packages: Vec<Package>,
+}
+
 /// The code-host data behind the PR-flow metrics.
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -101,7 +116,8 @@ pub struct ProjectFile {
     pub ai_compare: Option<AiCompare>,
     pub security: Option<SecurityDetail>,
     pub hotspots: Vec<RepoHotspots>,
-    pub velocity: Option<Value>,
+    /// `None` = not measured (no classifier configured).
+    pub velocity: Option<VelocityDetail>,
     pub meta: Meta,
 }
 
@@ -174,6 +190,8 @@ pub struct BuildInput {
     pub snapshots: SnapshotInput,
     /// Set when `days` include merged PRs (spec §8).
     pub pulls: Option<PullsInfo>,
+    /// Set when `days` include the scored packages (spec §4); package authors are real names here.
+    pub velocity: Option<VelocityDetail>,
 }
 
 pub struct Series {
@@ -202,7 +220,13 @@ pub fn series(
     let mut previous_keys: Option<&BTreeMap<String, u32>> = None;
     for (i, b) in buckets.iter().enumerate() {
         let end = b.end.min(as_of);
-        let mut m = metrics(&aggregate(days, b.start, b.end), opts, at_or_before(&snaps.points, end));
+        let mut m = metrics(
+            &aggregate(days, b.start, b.end),
+            opts,
+            at_or_before(&snaps.points, end),
+            b.start,
+            b.end,
+        );
         // New / fixed SAST findings against the previous bucket's snapshot (spec §7.4).
         let keys = snaps.sast_keys.range(..=end).next_back().and_then(|(_, k)| k.as_ref());
         let (new, fixed) = match (keys, previous_keys) {
@@ -284,6 +308,7 @@ pub fn build(input: BuildInput) -> (ProjectFile, LeadsFile) {
         dialect,
         snapshots,
         pulls,
+        velocity,
     } = input;
     let opts = MetricOptions {
         breadth_roles: project.breadth_roles.clone(),
@@ -291,6 +316,7 @@ pub fn build(input: BuildInput) -> (ProjectFile, LeadsFile) {
         mix_roles: mix_roles(&days),
         pull_requests: pulls.is_some(),
         pr_size: pulls.as_ref().is_some_and(|p| p.sizes),
+        velocity: velocity.as_ref().map(|v| v.options.clone()),
     };
     let monthly = series(&days, &months(project.range_start, as_of), &opts, &snapshots, as_of);
     let weekly = series(&days, &weeks(project.range_start, as_of), &opts, &snapshots, as_of);
@@ -334,11 +360,23 @@ pub fn build(input: BuildInput) -> (ProjectFile, LeadsFile) {
                 Some(p) if !p.sizes => nm.push("pr_size".into()),
                 Some(_) => {}
             }
-            nm.push("velocity".into());
+            if velocity.is_none() {
+                nm.push("velocity".into());
+            }
             nm
         },
         pull_requests: pulls,
     };
+    // Author-week package ids name a person: pseudonymize them like `days`.
+    let velocity = velocity.map(|mut v| {
+        for p in &mut v.packages {
+            if let Some(a) = p.author.take() {
+                let pseudo = ids.get(&a).map_or("p0", String::as_str);
+                p.id = p.id.replacen(&a, pseudo, 1);
+            }
+        }
+        v
+    });
     let leads = LeadsFile {
         schema: LEADS_SCHEMA.into(),
         project: project.name.clone(),
@@ -360,7 +398,7 @@ pub fn build(input: BuildInput) -> (ProjectFile, LeadsFile) {
         ai_compare: ai,
         security: snapshots.security,
         hotspots: snapshots.hotspots,
-        velocity: None,
+        velocity,
         meta,
     };
     (file, leads)

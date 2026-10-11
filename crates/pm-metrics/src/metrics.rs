@@ -10,6 +10,7 @@ use crate::day::{Day, Days, Group, aggregate};
 use crate::pr::hours;
 use crate::snapshot::SnapshotPoint;
 use crate::stats::{entropy_norm, median, median_f64, pct, percentile};
+use crate::velocity::VelocityOptions;
 
 /// A role or technology counts for a person from this many added lines (spec §5).
 pub const MULTISTACK_THRESHOLD: u64 = 40;
@@ -24,6 +25,8 @@ pub struct MetricOptions {
     pub pull_requests: bool,
     /// The code host reports PR line counts (GitHub).
     pub pr_size: bool,
+    /// Work packages were scored (spec §4); else Velocity is left out (not measured).
+    pub velocity: Option<VelocityOptions>,
 }
 
 /// One person's multi-stack line-up in a window (lead-only drill-down).
@@ -162,9 +165,37 @@ fn combined(agg: &Day) -> Group {
     g
 }
 
+/// Velocity of `[start, end]` (spec §4): points per FTE-day, else per active engineer-day with
+/// `velocity_approx` = 1. Null for a range that starts before scoring did or holds an unscored
+/// package.
+fn velocity(m: &mut Metrics, agg: &Day, v: &VelocityOptions, start: NaiveDate, end: NaiveDate) {
+    let c = &agg.velocity;
+    let packages = Some(c.packages as u64);
+    m.put("velocity_packages", Some(c.packages as f64), None);
+    let points = (start >= v.since && c.unscored == 0).then_some(c.points as f64);
+    let (denominator, approx) = match v.fte_days(start, end) {
+        Some(d) => (d, false),
+        None => (agg.person_days as f64, true),
+    };
+    let per = |d: f64| points.filter(|_| d > 0.0).map(|p| p / d);
+    m.put("velocity", per(denominator), packages);
+    m.put("velocity_approx", points.map(|_| approx as u8 as f64), None);
+    m.put("velocity_points", points, packages);
+    m.put("points_per_commit", per(c.commits as f64), Some(c.commits as u64));
+    m.put("points_per_kloc", per(c.added as f64 / 1000.0), Some(c.added));
+    m.put("verification_debt_pts", points.map(|_| c.debt as f64), packages);
+}
+
 /// `snapshot` is the snapshot at the range's end (spec §1.1: a range shows the snapshot value at its
-/// end); its metrics are added and duplication joins Quality.
-pub fn metrics(agg: &Day, opts: &MetricOptions, snapshot: Option<&SnapshotPoint>) -> Metrics {
+/// end); its metrics are added and duplication joins Quality. `[start, end]` is the range `agg`
+/// sums (Velocity counts its business days).
+pub fn metrics(
+    agg: &Day,
+    opts: &MetricOptions,
+    snapshot: Option<&SnapshotPoint>,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> Metrics {
     let mut m = Metrics::default();
     let all = combined(agg);
     let commits = all.commits as u64;
@@ -241,6 +272,10 @@ pub fn metrics(agg: &Day, opts: &MetricOptions, snapshot: Option<&SnapshotPoint>
         }
     }
 
+    if let Some(v) = &opts.velocity {
+        velocity(&mut m, agg, v, start, end);
+    }
+
     if let Some(sp) = snapshot {
         for (id, v) in &sp.values {
             m.values.insert(id.clone(), *v);
@@ -307,6 +342,78 @@ pub fn ai_compare(days: &Days, end: NaiveDate) -> AiCompare {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::velocity::{FtePeriod, VelocityDay};
+
+    const D0: NaiveDate = NaiveDate::from_ymd_opt(2025, 1, 1).unwrap();
+
+    fn d(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    #[test]
+    fn velocity_per_fte_day_or_engineer_day() {
+        let mut days = Days::new();
+        for (date, people, pts) in [("2026-08-03", 2, 8u32), ("2026-08-04", 1, 5), ("2026-08-10", 3, 0)] {
+            let day = days.entry(d(date)).or_default();
+            for i in 0..people {
+                day.person_commits.insert(format!("p{i}"), 1);
+            }
+            day.velocity = VelocityDay {
+                packages: 1,
+                points: pts,
+                commits: 4,
+                added: 500,
+                debt: pts / 2,
+                ..Default::default()
+            };
+        }
+        let mut v = VelocityOptions {
+            since: d("2026-08-01"),
+            as_of: d("2026-08-31"),
+            fte: vec![FtePeriod {
+                from: None,
+                to: None,
+                fte: 2.0,
+            }],
+        };
+        let opts = |v: &VelocityOptions| MetricOptions {
+            velocity: Some(v.clone()),
+            ..Default::default()
+        };
+        let (s, e) = (d("2026-08-01"), d("2026-08-31"));
+        let agg = aggregate(&days, s, e);
+        assert_eq!(agg.person_days, 6);
+        let m = metrics(&agg, &opts(&v), None, s, e);
+        // 13 points over 21 business days × 2 FTE.
+        assert_eq!(m.values["velocity"], Some(13.0 / 42.0));
+        assert_eq!(m.values["velocity_approx"], Some(0.0));
+        assert_eq!(m.values["points_per_commit"], Some(13.0 / 12.0));
+        assert_eq!(m.values["points_per_kloc"], Some(13.0 / 1.5));
+        assert_eq!(m.values["verification_debt_pts"], Some(6.0));
+        assert_eq!(m.n["velocity"], Some(3));
+
+        v.fte.clear();
+        let m = metrics(&agg, &opts(&v), None, s, e);
+        assert_eq!(m.values["velocity"], Some(13.0 / 6.0), "per engineer-day");
+        assert_eq!(m.values["velocity_approx"], Some(1.0));
+
+        // Before scoring started, or with an unscored package: null, not a low number.
+        let m = metrics(&agg, &opts(&v), None, d("2026-07-27"), e);
+        assert_eq!(m.values["velocity"], None);
+        assert_eq!(m.values["velocity_packages"], Some(3.0));
+        days.get_mut(&d("2026-08-10")).unwrap().velocity.unscored = 1;
+        let m = metrics(&aggregate(&days, s, e), &opts(&v), None, s, e);
+        assert_eq!(m.values["velocity"], None);
+        assert_eq!(m.values["velocity_points"], None);
+        let m = metrics(
+            &aggregate(&days, s, d("2026-08-09")),
+            &opts(&v),
+            None,
+            s,
+            d("2026-08-09"),
+        );
+        assert_eq!(m.values["velocity_points"], Some(13.0));
+    }
 
     #[test]
     fn rework_band() {
@@ -363,11 +470,12 @@ mod tests {
             mix_roles: vec![Role::Backend],
             pull_requests: true,
             pr_size: true,
+            velocity: None,
         };
-        let m = metrics(&Day::default(), &opts, None);
+        let m = metrics(&Day::default(), &opts, None, D0, D0);
         assert_eq!(m.values["commits"], Some(0.0));
         assert_eq!(m.values["pr_count"], Some(0.0));
-        let without = metrics(&Day::default(), &MetricOptions::default(), None);
+        let without = metrics(&Day::default(), &MetricOptions::default(), None, D0, D0);
         assert!(!without.values.contains_key("pr_count"), "not measured: left out");
         for id in [
             "rework_pct",

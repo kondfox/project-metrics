@@ -8,6 +8,7 @@ use pm_classify::Role;
 use serde::{Deserialize, Serialize};
 
 use crate::pr::PrDay;
+use crate::velocity::VelocityDay;
 
 fn is_zero<T: Default + PartialEq>(x: &T) -> bool {
     *x == T::default()
@@ -73,6 +74,13 @@ pub struct Day {
     /// Merged pull requests (spec §8), by merge date.
     #[serde(default, skip_serializing_if = "PrDay::is_empty")]
     pub pr: PrDay,
+    /// Work packages dated this day (spec §4).
+    #[serde(default, skip_serializing_if = "VelocityDay::is_empty")]
+    pub velocity: VelocityDay,
+    /// Distinct (day, person) pairs with a commit, the engineer-days of Velocity's fallback
+    /// denominator. Derived by [`aggregate`], never stored.
+    #[serde(skip)]
+    pub person_days: u64,
 }
 
 pub type Days = BTreeMap<NaiveDate, Day>;
@@ -96,6 +104,8 @@ impl Day {
         self.rework_added += o.rework_added;
         self.reworked += o.reworked;
         self.pr.merge(&o.pr);
+        self.velocity.merge(&o.velocity);
+        self.person_days += o.person_days;
         for (p, n) in &o.person_commits {
             *self.person_commits.entry(p.clone()).or_default() += n;
         }
@@ -139,6 +149,7 @@ pub fn aggregate(days: &Days, start: NaiveDate, end: NaiveDate) -> Day {
     }
     for d in days.range(start..=end).map(|(_, d)| d) {
         agg.merge(d);
+        agg.person_days += d.person_commits.len() as u64;
     }
     agg
 }

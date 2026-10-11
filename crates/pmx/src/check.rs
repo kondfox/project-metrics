@@ -1,7 +1,7 @@
 //! `pmx check` (plan §3.2): every path exists, every revision resolves, tokens are present, the
 //! data-policy guard holds, and no active identity is unmapped.
 
-use pm_config::{Config, DataPolicy, FteSource, Workspace, expand_path};
+use pm_config::{Config, DataPolicy, FteSource, Provider, Workspace, expand_path};
 use pm_git::{Git, LogRange, parse_version};
 
 use crate::people::{Status, gather, propose};
@@ -26,19 +26,6 @@ fn f(level: Level, message: impl Into<String>) -> Finding {
     }
 }
 
-/// Is `url`'s host loopback (`localhost`, `127.*`, `::1`)?
-pub fn is_loopback(url: &str) -> bool {
-    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
-    let authority = rest.split('/').next().unwrap_or("");
-    let authority = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
-    let host = if let Some(v6) = authority.strip_prefix('[') {
-        v6.split(']').next().unwrap_or("")
-    } else {
-        authority.split(':').next().unwrap_or("")
-    };
-    host.eq_ignore_ascii_case("localhost") || host.starts_with("127.") || host == "::1"
-}
-
 /// Follow a classifier and its fallbacks; error if any of them would send code off the machine
 /// (plan §6.3).
 pub fn local_only_violation(config: &Config, start: &str) -> Option<String> {
@@ -52,17 +39,54 @@ pub fn local_only_violation(config: &Config, start: &str) -> Option<String> {
         let Some(c) = config.classifiers.get(&name) else {
             return Some(format!("unknown classifier `{name}`"));
         };
-        let provider = c.get("provider").and_then(|v| v.as_str()).unwrap_or("");
-        let base = c.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
-        let local = match provider {
-            "command" => true,
-            "openai-compatible" => is_loopback(base),
-            _ => false,
-        };
-        if !local {
-            return Some(format!("classifier `{name}` ({provider}) is not local"));
+        if !pm_llm::is_local(c) {
+            return Some(format!("classifier `{name}` ({}) is not local", c.provider.as_str()));
         }
-        name = c.get("fallback").and_then(|v| v.as_str())?.to_string();
+        name = c.fallback.clone()?;
+    }
+}
+
+/// Can each classifier run? (Providers not built yet, a missing `claude`, an unpinned model.)
+fn classifier_findings(c: &Config, out: &mut Vec<Finding>) {
+    for (name, cl) in &c.classifiers {
+        if let Err(e) = pm_llm::build(cl) {
+            out.push(f(Level::Error, format!("classifier `{name}`: {e}")));
+            continue;
+        }
+        if let Some(env) = &cl.api_key_env {
+            if std::env::var_os(env).is_none() {
+                out.push(f(Level::Warn, format!("classifier `{name}`: ${env} is not set")));
+            }
+        }
+        if cl.provider == Provider::ClaudeCode {
+            let program = cl
+                .command
+                .as_ref()
+                .and_then(|c| c.first())
+                .map_or("claude", String::as_str);
+            match std::process::Command::new(program).arg("--version").output() {
+                Ok(o) if o.status.success() => out.push(f(
+                    Level::Ok,
+                    format!(
+                        "classifier `{name}`: {} (`pmx classifier test {name}` checks the login)",
+                        String::from_utf8_lossy(&o.stdout).trim()
+                    ),
+                )),
+                _ => out.push(f(
+                    Level::Error,
+                    format!("classifier `{name}`: `{program}` not found (install Claude Code and log in)"),
+                )),
+            }
+            let model = cl.model.as_deref().unwrap_or(pm_llm::provider::DEFAULT_CLAUDE_MODEL);
+            if !model.chars().any(|ch| ch.is_ascii_digit()) {
+                out.push(f(
+                    Level::Warn,
+                    format!(
+                        "classifier `{name}`: model `{model}` is an alias; pin a versioned id so cached scores keep their meaning"
+                    ),
+                ));
+            }
+        }
     }
 }
 
@@ -83,12 +107,6 @@ pub fn check(ws: &Workspace, unmapped_threshold: u64) -> Vec<Finding> {
         None => out.push(f(Level::Error, "git not found")),
     }
 
-    let default_classifier = c
-        .velocity
-        .as_ref()
-        .and_then(|v| v.get("classifier"))
-        .and_then(|v| v.as_str())
-        .map(String::from);
     for repo in &c.repos {
         let name = repo.display_name();
         let dir = ws.repo_dir(repo);
@@ -137,8 +155,8 @@ pub fn check(ws: &Workspace, unmapped_threshold: u64) -> Vec<Finding> {
             }
         }
         if repo.data_policy == Some(DataPolicy::LocalOnly) {
-            if let Some(cl) = repo.classifier.clone().or(default_classifier.clone()) {
-                if let Some(v) = local_only_violation(c, &cl) {
+            if let Some(cl) = c.classifier_for(repo) {
+                if let Some(v) = local_only_violation(c, cl) {
                     out.push(f(Level::Error, format!("{name}: data_policy = \"local-only\" but {v}")));
                 }
             }
@@ -172,13 +190,7 @@ pub fn check(ws: &Workspace, unmapped_threshold: u64) -> Vec<Finding> {
             ));
         }
     }
-    for (name, cl) in &c.classifiers {
-        if let Some(env) = cl.get("api_key_env").and_then(|v| v.as_str()) {
-            if std::env::var_os(env).is_none() {
-                out.push(f(Level::Warn, format!("classifier `{name}`: ${env} is not set")));
-            }
-        }
-    }
+    classifier_findings(c, &mut out);
     if let Some(fte) = &c.fte {
         if fte.source == FteSource::File {
             let path = expand_path(fte.file.as_deref().unwrap_or(""), &ws.root);
@@ -267,15 +279,6 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn loopback() {
-        assert!(is_loopback("http://localhost:11434/v1"));
-        assert!(is_loopback("http://127.0.0.1:8080"));
-        assert!(is_loopback("http://[::1]:8080/v1"));
-        assert!(!is_loopback("https://api.example.com/v1"));
-        assert!(!is_loopback("http://localhost.example.com"));
-    }
-
-    #[test]
     fn data_policy_guard() {
         let text = r#"
             [project]
@@ -293,10 +296,18 @@ mod tests {
             provider = "anthropic"
             [classifiers.solo]
             provider = "command"
+            command = ["./classify"]
+            [classifiers.claude]
+            provider = "claude-code"
         "#;
         let c = Config::parse(text, Path::new("x")).unwrap();
         assert_eq!(local_only_violation(&c, "solo"), None);
         assert!(local_only_violation(&c, "local").unwrap().contains("`remote`"));
         assert!(local_only_violation(&c, "nope").unwrap().contains("unknown"));
+        assert!(
+            local_only_violation(&c, "claude")
+                .unwrap()
+                .contains("(claude-code) is not local")
+        );
     }
 }

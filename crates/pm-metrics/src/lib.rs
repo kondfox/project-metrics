@@ -7,6 +7,7 @@ pub mod period;
 pub mod pr;
 pub mod snapshot;
 pub mod stats;
+pub mod velocity;
 
 pub use day::{Day, Days, Group, aggregate, merge_days};
 pub use metrics::{AiCompare, Leader, MetricOptions, Metrics, MultiStack, metrics, multistack};

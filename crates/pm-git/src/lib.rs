@@ -322,6 +322,22 @@ impl Git {
         Ok(())
     }
 
+    /// One commit's patch, whitespace changes ignored (`show -w`): the diff a classifier reads
+    /// (spec §4). Merge commits show no patch.
+    pub fn patch(&self, sha: &str) -> Result<String> {
+        self.run(&[
+            "show",
+            "-w",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--format=",
+            "-p",
+            sha,
+            "--",
+        ])
+    }
+
     /// Extract the tree at `rev` into `dest` (`git archive`: reads objects only, never touches the
     /// repo's working copy or its `.git`).
     pub fn archive_to(&self, rev: &str, dest: &Path) -> Result<()> {

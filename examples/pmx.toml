@@ -20,6 +20,8 @@ role = "frontend"
 [[repo]]
 path = "~/src/acme/shop-legacy"
 role = "per-file"                 # monorepo role rules for this repo only (spec §1.5)
+classifier = "local"              # per-repo override of [velocity] classifier
+data_policy = "local-only"        # refuse any classifier that sends code off this machine
 
 [code_host]                       # PR flow (spec §8); repos without code_host_id are not read
 type = "gitlab"                   # or "github"
@@ -48,3 +50,16 @@ cadence = "weekly"                # or "monthly" (month-ends only: fewer trees t
 sast_rules = ["~/rules/semgrep"]  # semgrep rule files or folders; none → SAST "not measured"
 # since = "2026-01-01"            # don't scan trees before this date
 # jobs = 2                        # trees scanned at once
+
+[classifiers.claude]              # LLM classifiers for Velocity (spec §10.3, plan §6)
+provider = "claude-code"          # the Claude Code CLI under your own login (subscription or API)
+model = "claude-sonnet-5-5"       # pin a versioned id: it is part of the answer cache key
+# jobs = 4                        # packages classified at once
+
+[classifiers.local]
+provider = "command"              # any program: request JSON on stdin, response JSON on stdout
+command = ["./tools/my-classifier", "--model", "qwen3-coder:30b"]
+
+[velocity]
+classifier = "claude"             # project default
+# since = "2026-01-01"            # score work packages from this date only (default range_start)
