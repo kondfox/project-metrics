@@ -493,7 +493,14 @@ fallback); per-person points in `leads.json` (each package split by its commits)
 section, package table, health line and the lead's points table; `pmx classifier test`,
 `pmx classifier eval` (D32), `collect --no-velocity`. Tested with fake `command` classifiers and fake
 HTTP (`crates/pmx/tests/velocity.rs`, `crates/pmx/tests/classifier.rs`, `pm-llm` unit tests). Run live:
-`claude-code` with Sonnet on the demo project (87 packages; `effort` and `samples` too). **Left for the
+`claude-code` with Sonnet on the demo project (87 packages; `effort` and `samples` too), and
+(2026-10-11) on the three pilot projects' private M6 workspaces: `claude-code` with `claude-sonnet-5-5`,
+`[velocity] since` = the reference set's window, collected `--as-of 2026-09-30` at the golden pins. Every
+package was scored by that one model (none unscored, escalated or low-confidence; no confidence gate, since
+`claude-code` has no confidence); package counts and ticketed shares are close to the prototype's
+extraction; the fleet pools Velocity per FTE-day (same classifier, FTE known everywhere), checked against
+Σ points ÷ Σ FTE-days rebuilt from each project's FTE periods. Not an eval: no κ against the reference
+scores yet. Nothing from the run is in this repo. **Left for the
 exit criterion:** `classifier eval` of one remote and one local classifier against the private reference
 set (needs `PMX_GOLDEN_DIR`'s reference as `project,id,R1..R6`, a local model server, and API keys for
 `jev`/`anthropic`, none of which are on this machine); the fleet marking of each project's classifier

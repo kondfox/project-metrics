@@ -92,7 +92,7 @@ describe("<App>", () => {
     unmount();
     renderApp(fixtureWithVelocity());
     const [headline, tile] = screen.getAllByRole("group", { name: "Velocity" });
-    expect(headline).toHaveTextContent("0.2points per FTE-day");
+    expect(headline).toHaveTextContent("0.20points per FTE-day");
     expect(headline).toHaveTextContent("points per FTE-day · 2 work packages");
     expect(tile).toHaveTextContent("low n · 2");
     expect(screen.getByRole("group", { name: "Points delivered" })).toHaveTextContent("9");

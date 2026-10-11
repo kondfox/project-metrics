@@ -4,6 +4,9 @@ describe("format", () => {
   it("formats numbers and gaps", () => {
     expect(formatNumber(12418)).toBe("12,418");
     expect(formatNumber(2.456, 1)).toBe("2.5");
+    expect(formatNumber(3, 2)).toBe("3.00");
+    expect(formatNumber(1234.5, 1)).toBe("1,234.5");
+    expect(formatNumber(-0.004, 2)).toBe("0.00");
     expect(formatNumber(null)).toBe("–");
     expect(formatPercent(18.4211)).toBe("18.4%");
     expect(formatPercent(undefined)).toBe("–");

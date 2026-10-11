@@ -1,9 +1,18 @@
-const nf = new Intl.NumberFormat("en-US");
+const formats = new Map<number, Intl.NumberFormat>();
 
-/** `12,418`; `–` for no value. */
+/**
+ * `12,418`; `–` for no value. Keeps exactly `decimals` digits (`3.00`, not `3`), so values of one
+ * metric line up in tables and tiles.
+ */
 export function formatNumber(v: number | null | undefined, decimals = 0): string {
   if (v == null || Number.isNaN(v)) return "–";
-  return nf.format(Number(v.toFixed(decimals)));
+  let f = formats.get(decimals);
+  if (!f) {
+    f = new Intl.NumberFormat("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    formats.set(decimals, f);
+  }
+  // Rounding first keeps -0.004 from printing as "-0.00".
+  return f.format(Number(v.toFixed(decimals)) || 0);
 }
 
 export function formatPercent(v: number | null | undefined, decimals = 1): string {
