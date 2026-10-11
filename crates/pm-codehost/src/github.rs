@@ -12,7 +12,7 @@ use crate::{
 
 const PAGE: u32 = 25;
 
-const QUERY: &str = r#"query($owner: String!, $name: String!, $cursor: String, $order: PullRequestOrderField!, $files: Boolean!) {
+const QUERY: &str = r#"query($owner: String!, $name: String!, $cursor: String, $order: IssueOrderField!, $files: Boolean!) {
   repository(owner: $owner, name: $name) {
     pullRequests(states: MERGED, orderBy: {field: $order, direction: DESC}, first: PAGE, after: $cursor) {
       pageInfo { hasNextPage endCursor }
