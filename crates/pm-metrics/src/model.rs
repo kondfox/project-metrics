@@ -71,10 +71,25 @@ pub struct VelocityDetail {
     /// Every classifier that fed this file (`provider:model:template`): scores from different
     /// models are not strictly comparable.
     pub classifiers: Vec<String>,
+    /// Models that answered (more than one per classifier: a server-side fallback ran).
+    pub models: Vec<String>,
+    pub health: VelocityHealth,
     /// What the dashboard engine needs to recompute a custom range.
     pub options: VelocityOptions,
     /// Newest first.
     pub packages: Vec<Package>,
+}
+
+/// How the scoring went (plan §6.4: the escalation rate is a health metric).
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct VelocityHealth {
+    pub packages: u32,
+    pub unscored: u32,
+    /// Sent to the fallback classifier.
+    pub escalated: u32,
+    /// Kept below the confidence gate.
+    pub low_confidence: u32,
 }
 
 /// The code-host data behind the PR-flow metrics.
@@ -130,6 +145,10 @@ pub struct LeadsFile {
     pub people: BTreeMap<String, String>,
     /// Bucket label → multi-stack leaders.
     pub leaders: BTreeMap<String, Vec<Leader>>,
+    /// Bucket label → person → Velocity points (each package split by its commits). Never a
+    /// headline (spec §4).
+    #[serde(default)]
+    pub points: BTreeMap<String, BTreeMap<String, f64>>,
 }
 
 /// Dependency-vulnerability drill-down at the latest snapshot (spec §7.1).
@@ -367,6 +386,18 @@ pub fn build(input: BuildInput) -> (ProjectFile, LeadsFile) {
         },
         pull_requests: pulls,
     };
+    let mut points = BTreeMap::new();
+    if let Some(v) = &velocity {
+        for b in months(project.range_start, as_of)
+            .iter()
+            .chain(&weeks(project.range_start, as_of))
+        {
+            let p = crate::velocity::points_by_person(&v.packages, b.start, b.end);
+            if !p.is_empty() {
+                points.insert(b.label.clone(), p);
+            }
+        }
+    }
     // Author-week package ids name a person: pseudonymize them like `days`.
     let velocity = velocity.map(|mut v| {
         for p in &mut v.packages {
@@ -382,6 +413,7 @@ pub fn build(input: BuildInput) -> (ProjectFile, LeadsFile) {
         project: project.name.clone(),
         people: ids.iter().map(|(name, id)| (id.clone(), name.clone())).collect(),
         leaders,
+        points,
     };
     let file = ProjectFile {
         schema: PROJECT_SCHEMA.into(),

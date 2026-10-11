@@ -5,6 +5,7 @@ pub mod check;
 pub mod collect;
 pub mod dashboard;
 pub mod demo;
+pub mod eval;
 pub mod export;
 pub mod ingest;
 pub mod people;

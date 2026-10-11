@@ -137,6 +137,9 @@ The input for `pmx classifier eval` (plan §6.5). Built once per freeze, private
 - Candidate classifiers (smaller models, local models, Jev where the code may leave the machine) are scored on
   the same packages and compared per axis (quadratic-weighted κ) and on points.
 - Client code goes only to providers its data policy allows. The reference model is itself a provider.
+- **What `pmx classifier eval` reads** (plan D32): the scores only, as `project,id,R1,…,R6` (CSV or a JSON
+  array), kept with the golden set. pmx rebuilds each package from the workspace's repos (pin `rev` to the
+  freeze's SHAs), so author-week ids must use the canonical `[people]` names; ids it cannot find are listed.
 
 ## 6. Freeze and run log
 

@@ -35,10 +35,20 @@ pub struct Package {
     /// The classifier (`provider:model:template`) and the model that answered.
     pub classifier: Option<String>,
     pub model: Option<String>,
+    /// Sent to the fallback classifier after a low-confidence answer and a re-ask (plan §6.4).
+    #[serde(default)]
+    pub escalated: bool,
+    /// Still below the confidence gate.
+    #[serde(default)]
+    pub low_confidence: bool,
     /// The person of an author-week package; replaced by a pseudonym before writing.
     #[serde(skip)]
     #[cfg_attr(feature = "ts", ts(skip))]
     pub author: Option<String>,
+    /// Commits per person, for the lead-only points per person. Never written to `project.json`.
+    #[serde(skip)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub authors: std::collections::BTreeMap<String, u32>,
 }
 
 impl Package {
@@ -84,6 +94,27 @@ impl VelocityDay {
         self.added += o.added;
         self.debt += o.debt;
     }
+}
+
+/// Points per person in `[start, end]`, each package's points split by its commits (lead-only).
+pub fn points_by_person(
+    packages: &[Package],
+    start: NaiveDate,
+    end: NaiveDate,
+) -> std::collections::BTreeMap<String, f64> {
+    let mut out = std::collections::BTreeMap::new();
+    for p in packages.iter().filter(|p| p.date >= start && p.date <= end) {
+        let (Some(pts), total) = (p.points, p.authors.values().sum::<u32>()) else {
+            continue;
+        };
+        if total == 0 {
+            continue;
+        }
+        for (person, n) in &p.authors {
+            *out.entry(person.clone()).or_insert(0.0) += pts as f64 * *n as f64 / total as f64;
+        }
+    }
+    out
 }
 
 pub fn velocity_days(packages: &[Package]) -> Days {
@@ -211,7 +242,10 @@ mod tests {
             truncated: false,
             classifier: None,
             model: None,
+            escalated: false,
+            low_confidence: false,
             author: None,
+            authors: Default::default(),
         };
         let days = velocity_days(&[
             p("2026-08-03", Some([2, 0, 1, 2, 1, 2]), Some(3), false),

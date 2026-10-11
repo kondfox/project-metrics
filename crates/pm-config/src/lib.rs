@@ -308,13 +308,16 @@ pub struct ClassifierConfig {
     /// Packages classified at the same time (default 4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jobs: Option<usize>,
+    /// `anthropic` and `claude-code`: the effort level (`low` … `max`; default: the model's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     /// Seconds before one call is abandoned (default 300).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
 }
 
 /// Classifier providers (plan §6.2). `claude-code` runs the Claude Code CLI (`claude -p`) under the
-/// user's own login, so a Claude subscription can classify without an API key (D26).
+/// user's own login, so a Claude subscription can classify without an API key (D28).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Provider {

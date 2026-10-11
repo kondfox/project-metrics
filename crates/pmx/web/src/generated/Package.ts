@@ -36,4 +36,12 @@ truncated: boolean,
 /**
  * The classifier (`provider:model:template`) and the model that answered.
  */
-classifier: string | null, model: string | null, };
+classifier: string | null, model: string | null, 
+/**
+ * Sent to the fallback classifier after a low-confidence answer and a re-ask (plan §6.4).
+ */
+escalated: boolean, 
+/**
+ * Still below the confidence gate.
+ */
+low_confidence: boolean, };

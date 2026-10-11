@@ -1,24 +1,19 @@
 import { ChartGrid, TimeSeriesChart } from "../components/charts/TimeSeriesChart";
 import { PackagesTable } from "../components/tables/PackagesTable";
+import { PointsTable } from "../components/tables/PointsTable";
 import { MetricTile } from "../components/tiles/MetricTile";
 import { NotMeasuredTile } from "../components/tiles/NotMeasuredTile";
 import { TileGrid } from "../components/tiles/Tile";
 import { Section } from "../components/ui/Section";
-import type { Metrics } from "../data/types";
+import { bucketMetrics } from "../data/project";
 import { formatDate } from "../lib/dates";
 import { formatNumber } from "../lib/format";
 import { useDashboard, useMeasured } from "../state/hooks";
-
-/** Under the Velocity value: the denominator, marked `~` when FTE is unknown (spec §4). */
-export function velocityNote(m: Metrics): string {
-  const per =
-    m.values.velocity_approx === 1 ? "~ per active engineer-day (FTE unknown)" : "points per FTE-day";
-  return `${per} · ${formatNumber(m.values.velocity_packages)} work packages`;
-}
+import { velocityNote } from "../metrics/velocity";
 
 /** Velocity: six-axis complexity points of delivered work packages per FTE-day (spec §4). */
 export function VelocitySection() {
-  const { project, range } = useDashboard();
+  const { project, leads, range } = useDashboard();
   const measured = useMeasured();
   const v = project.velocity;
   if (!v || !measured("velocity")) {
@@ -33,6 +28,10 @@ export function VelocitySection() {
   const [start, end] = [formatDate(range.start), formatDate(range.end)];
   const inRange = v.packages.filter((p) => p.date >= start && p.date <= end);
   const unscored = inRange.filter((p) => p.points == null).length;
+  const escalated = inRange.filter((p) => p.escalated).length;
+  const unsure = inRange.filter((p) => p.low_confidence).length;
+  const label = bucketMetrics(project, range)?.label;
+  const points = leads && label ? leads.points[label] : undefined;
   return (
     <Section title="Velocity">
       <p>
@@ -41,6 +40,13 @@ export function VelocitySection() {
         {v.classifiers.length > 1 ? " Scores from different classifiers are not strictly comparable." : ""}
         {unscored > 0
           ? ` ${formatNumber(unscored)} package(s) in this range are not scored yet, so the range has no Velocity.`
+          : ""}
+        {escalated > 0
+          ? ` ${formatNumber(escalated)} went to the fallback classifier after unsure answers.`
+          : ""}
+        {unsure > 0 ? ` ${formatNumber(unsure)} stayed below the confidence gate.` : ""}
+        {v.models.length > v.classifiers.length
+          ? ` Answered by ${v.models.join(", ")}: a declined request ran on a fallback model.`
           : ""}
       </p>
       <TileGrid>
@@ -71,6 +77,7 @@ export function VelocitySection() {
         />
       </ChartGrid>
       <PackagesTable packages={inRange.slice(0, 25)} total={inRange.length} />
+      {points && <PointsTable points={points} />}
     </Section>
   );
 }

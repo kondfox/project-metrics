@@ -9,4 +9,9 @@ people: { [key in string]: string },
 /**
  * Bucket label → multi-stack leaders.
  */
-leaders: { [key in string]: Array<Leader> }, };
+leaders: { [key in string]: Array<Leader> }, 
+/**
+ * Bucket label → person → Velocity points (each package split by its commits). Never a
+ * headline (spec §4).
+ */
+points: { [key in string]: { [key in string]: number } }, };

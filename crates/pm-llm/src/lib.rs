@@ -3,14 +3,18 @@
 //!
 //! Counting and arithmetic stay in code ([`QuestionSet::axes`]); a model only answers questions.
 
+pub mod api;
+pub mod http;
 pub mod prompt;
 pub mod provider;
 pub mod rubric;
 pub mod schema;
+pub mod strategy;
 
-pub use provider::{Provider, build, is_local, is_loopback};
+pub use provider::{Provider, build, build_with, is_local, is_loopback};
 pub use rubric::{Axes, Facts, QuestionSet};
 pub use schema::{Answer, ConfidenceSource, Question, Questions, Request, Response, Usage};
+pub use strategy::{Gated, classify_gated};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

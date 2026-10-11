@@ -53,11 +53,6 @@ fn classifier_findings(c: &Config, out: &mut Vec<Finding>) {
             out.push(f(Level::Error, format!("classifier `{name}`: {e}")));
             continue;
         }
-        if let Some(env) = &cl.api_key_env {
-            if std::env::var_os(env).is_none() {
-                out.push(f(Level::Warn, format!("classifier `{name}`: ${env} is not set")));
-            }
-        }
         if cl.provider == Provider::ClaudeCode {
             let program = cl
                 .command

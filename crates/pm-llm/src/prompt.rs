@@ -74,7 +74,21 @@ pub fn output_schema(req: &Request) -> Value {
     })
 }
 
-fn one_hot(key: String) -> BTreeMap<String, f64> {
+/// [`output_schema`] without numeric bounds, which the Claude and OpenAI structured-output APIs
+/// reject; out-of-range answers are clamped or refused by [`read_output`].
+pub fn strict_schema(req: &Request) -> Value {
+    let mut s = output_schema(req);
+    for p in s["properties"].as_object_mut().into_iter().flat_map(|m| m.values_mut()) {
+        if let Some(o) = p.as_object_mut() {
+            if o.remove("minimum").is_some() | o.remove("maximum").is_some() {
+                o.insert("description".into(), json!("probability from 0 to 1"));
+            }
+        }
+    }
+    s
+}
+
+pub(crate) fn one_hot(key: String) -> BTreeMap<String, f64> {
     [(key, 1.0)].into()
 }
 

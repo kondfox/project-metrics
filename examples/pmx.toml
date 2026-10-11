@@ -56,9 +56,29 @@ provider = "claude-code"          # the Claude Code CLI under your own login (su
 model = "claude-sonnet-5-5"       # pin a versioned id: it is part of the answer cache key
 # jobs = 4                        # packages classified at once
 
+# effort = "low"                  # claude-code / anthropic: thinking effort (part of the cache key)
+# samples = 3                     # ask k times: answer shares become probabilities (confidence gate)
+
 [classifiers.local]
-provider = "command"              # any program: request JSON on stdin, response JSON on stdout
-command = ["./tools/my-classifier", "--model", "qwen3-coder:30b"]
+provider = "openai-compatible"    # Ollama, vLLM, llama.cpp, LM Studio, OpenAI
+base_url = "http://localhost:11434/v1"   # loopback: allowed for local-only repos
+model = "qwen3-coder:30b"
+
+# [classifiers.jev]
+# provider = "jev"                # Jev's own schema: calibrated probabilities
+# model = "jev-1.13.0"            # pin a versioned id, never jev-latest
+# api_key_env = "TYPESAFE_API_KEY"
+# confidence_gate = 0.5           # unsure answers: re-ask with levels reordered, then the fallback
+# fallback = "claude"
+
+# [classifiers.api]
+# provider = "anthropic"          # the Claude API with an API key
+# model = "claude-sonnet-5-5"
+# api_key_env = "ANTHROPIC_API_KEY"
+
+# [classifiers.mine]
+# provider = "command"            # any program: request JSON on stdin, response JSON on stdout
+# command = ["./tools/my-classifier"]
 
 [velocity]
 classifier = "claude"             # project default

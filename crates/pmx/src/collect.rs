@@ -527,7 +527,7 @@ fn run_repo(
 }
 
 /// Run `f` over `items` on up to `workers` threads, keeping the input order in the output.
-fn pool<T: Sync, R: Send>(items: &[T], workers: usize, f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+pub(crate) fn pool<T: Sync, R: Send>(items: &[T], workers: usize, f: impl Fn(&T) -> R + Sync) -> Vec<R> {
     let next = AtomicUsize::new(0);
     let out: Mutex<Vec<Option<R>>> = Mutex::new((0..items.len()).map(|_| None).collect());
     std::thread::scope(|s| {

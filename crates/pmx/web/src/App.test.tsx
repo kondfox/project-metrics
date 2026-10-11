@@ -102,6 +102,14 @@ describe("<App>", () => {
     expect(table).toHaveTextContent("tidy the checkout form");
     expect(table).not.toHaveTextContent("SHOP-40");
     expect(screen.getByText(/six-axis@2 rubric by claude-code:claude-sonnet-5-5/)).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Points by person" })).not.toBeInTheDocument();
+  });
+
+  it("shows points by person only in the lead's private view", () => {
+    renderApp(fixtureWithVelocity(), fixtureLeads);
+    const table = screen.getByRole("table", { name: "Points by person" });
+    expect(table).toHaveTextContent("Jane Doe");
+    expect(table).toHaveTextContent("4.5");
   });
 
   it("hides AI series when attribution is off", () => {

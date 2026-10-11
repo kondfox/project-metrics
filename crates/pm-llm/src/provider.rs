@@ -1,15 +1,20 @@
-//! Providers fill the shared schema (plan §6.2). Built so far: `claude-code` (the Claude Code CLI
-//! under the user's own login, D26) and `command` (any local program).
+//! Providers fill the shared schema (plan §6.2): `claude-code` (the Claude Code CLI under the user's
+//! own login, D28) and `command` (any local program) here; the HTTP APIs in [`crate::api`].
 
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 use pm_config::{ClassifierConfig, Provider as Kind};
 use serde_json::{Value, json};
 
+use crate::api::{ANTHROPIC_URL, Anthropic, JEV_URL, Jev, OpenAiCompatible};
+use crate::http::{Http, Retry, UreqHttp};
 use crate::prompt::{self, TEMPLATE_VERSION};
 use crate::schema::{Request, Response, Usage};
+use crate::strategy::{Isolated, Sampled};
 use crate::{Error, Result};
 
 pub const DEFAULT_TIMEOUT_SECS: u64 = 300;
@@ -48,16 +53,37 @@ pub fn is_loopback(url: &str) -> bool {
     host.eq_ignore_ascii_case("localhost") || host.starts_with("127.") || host == "::1"
 }
 
-/// The provider for one `[classifiers.<name>]`.
+/// The provider for one `[classifiers.<name>]`, over real HTTP.
 pub fn build(c: &ClassifierConfig) -> Result<Box<dyn Provider>> {
     let timeout = Duration::from_secs(c.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
-    match c.provider {
-        Kind::ClaudeCode => Ok(Box::new(ClaudeCode {
+    build_with(c, Arc::new(UreqHttp::new(timeout)))
+}
+
+/// [`build`] over another transport (tests).
+pub fn build_with(c: &ClassifierConfig, http: Arc<dyn Http>) -> Result<Box<dyn Provider>> {
+    let timeout = Duration::from_secs(c.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
+    let model = || {
+        c.model
+            .clone()
+            .ok_or_else(|| Error::Config(format!("provider = \"{}\" needs `model`", c.provider.as_str())))
+    };
+    let key = |default_env: &str| -> Result<String> {
+        let env = c.api_key_env.as_deref().unwrap_or(default_env);
+        std::env::var(env)
+            .ok()
+            .filter(|k| !k.trim().is_empty())
+            .ok_or_else(|| Error::Config(format!("${env} is not set")))
+    };
+    let retry = Retry::default();
+    let samples = c.samples.unwrap_or(1).max(1);
+    let base: Box<dyn Provider> = match c.provider {
+        Kind::ClaudeCode => Box::new(ClaudeCode {
             program: c.command.clone().unwrap_or_else(|| vec!["claude".into()]),
             model: c.model.clone().unwrap_or_else(|| DEFAULT_CLAUDE_MODEL.into()),
+            effort: c.effort.clone(),
             timeout,
-        })),
-        Kind::Command => Ok(Box::new(CommandProvider {
+        }),
+        Kind::Command => Box::new(CommandProvider {
             program: c
                 .command
                 .clone()
@@ -65,12 +91,53 @@ pub fn build(c: &ClassifierConfig) -> Result<Box<dyn Provider>> {
                 .ok_or_else(|| Error::Config("provider = \"command\" needs `command`".into()))?,
             model: c.model.clone(),
             timeout,
-        })),
-        k => Err(Error::Config(format!(
-            "provider `{}` is not built yet (use claude-code or command)",
-            k.as_str()
-        ))),
-    }
+        }),
+        Kind::Jev => Box::new(Jev {
+            http,
+            base_url: c.base_url.clone().unwrap_or_else(|| JEV_URL.into()),
+            model: model()?,
+            api_key: key("TYPESAFE_API_KEY")?,
+            retry,
+        }),
+        Kind::Anthropic => Box::new(Anthropic {
+            http,
+            base_url: c.base_url.clone().unwrap_or_else(|| ANTHROPIC_URL.into()),
+            model: model()?,
+            api_key: key("ANTHROPIC_API_KEY")?,
+            effort: c.effort.clone(),
+            retry,
+        }),
+        Kind::OpenaiCompatible => Box::new(OpenAiCompatible {
+            http,
+            base_url: c
+                .base_url
+                .clone()
+                .ok_or_else(|| Error::Config("provider = \"openai-compatible\" needs `base_url`".into()))?,
+            model: model()?,
+            api_key: match &c.api_key_env {
+                Some(_) => Some(key("")?),
+                None => None,
+            },
+            // One deterministic answer, unless sampling.
+            temperature: (samples == 1).then_some(0.0),
+            retry,
+            logprobs: AtomicBool::new(true),
+        }),
+    };
+    // Jev already judges each question on its own and returns probabilities.
+    let base: Box<dyn Provider> = if c.isolate_questions == Some(true) && c.provider != Kind::Jev {
+        Box::new(Isolated { inner: base })
+    } else {
+        base
+    };
+    Ok(if samples > 1 && c.provider != Kind::Jev {
+        Box::new(Sampled {
+            inner: base,
+            k: samples,
+        })
+    } else {
+        base
+    })
 }
 
 /// `claude -p` with a forced JSON schema, no tools, no session and no settings, from an empty
@@ -79,12 +146,16 @@ pub fn build(c: &ClassifierConfig) -> Result<Box<dyn Provider>> {
 pub struct ClaudeCode {
     pub program: Vec<String>,
     pub model: String,
+    pub effort: Option<String>,
     pub timeout: Duration,
 }
 
 impl Provider for ClaudeCode {
     fn identity(&self) -> String {
-        format!("claude-code:{}:{TEMPLATE_VERSION}", self.model)
+        match &self.effort {
+            None => format!("claude-code:{}:{TEMPLATE_VERSION}", self.model),
+            Some(e) => format!("claude-code:{}@{e}:{TEMPLATE_VERSION}", self.model),
+        }
     }
 
     fn local(&self) -> bool {
@@ -107,6 +178,9 @@ impl Provider for ClaudeCode {
                 "--no-session-persistence",
             ])
             .current_dir(dir.path());
+        if let Some(e) = &self.effort {
+            cmd.args(["--effort", e]);
+        }
         let out = run(cmd, prompt::render(context, req).as_bytes(), self.timeout)?;
         let v: Value = serde_json::from_slice(&out.stdout).map_err(|_| {
             Error::Provider(format!(
@@ -342,6 +416,7 @@ mod tests {
         let p = ClaudeCode {
             program: vec![fake.display().to_string()],
             model: "claude-sonnet-5-5".into(),
+            effort: Some("low".into()),
             timeout: Duration::from_secs(20),
         };
         let r = p.classify(&set.context, &req).unwrap();
@@ -356,6 +431,7 @@ mod tests {
         let args = std::fs::read_to_string(dir.path().join("args")).unwrap();
         assert!(args.contains("--json-schema\n{"));
         assert!(args.contains("--tools\n\n"), "no tools: {args}");
+        assert!(args.contains("--effort\nlow\n"));
         assert!(
             std::fs::read_to_string(dir.path().join("stdin"))
                 .unwrap()

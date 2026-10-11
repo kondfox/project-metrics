@@ -655,6 +655,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+ "ureq",
 ]
 
 [[package]]

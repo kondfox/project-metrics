@@ -199,6 +199,23 @@ enum RepoCommand {
 enum ClassifierCommand {
     /// Score one small fictional work package with NAME, to check that it runs and is logged in.
     Test { name: String },
+    /// Score the reference set's packages of this project with NAME and compare with the reference
+    /// scores (κ per axis, points, Velocity drift, test–retest). Prints to the terminal only.
+    Eval {
+        name: String,
+        /// `project,id,R1..R6` as CSV, or a JSON array of those objects.
+        #[arg(long)]
+        reference: PathBuf,
+        /// 2 also scores every package a second time without the cache (test–retest).
+        #[arg(long, default_value_t = 2)]
+        runs: u32,
+        /// Measure as if today were this date (pin `rev` in pmx.toml to the reference's SHAs).
+        #[arg(long)]
+        as_of: Option<NaiveDate>,
+        /// Don't read or store answers in .pmx/cache.sqlite.
+        #[arg(long)]
+        no_cache: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -762,6 +779,34 @@ fn run(cli: Cli) -> Result<()> {
             cmd_plan(&ws, opts)?;
         }
         Command::Doctor => cmd_doctor(&ws_dir)?,
+        Command::Classifier(ClassifierCommand::Eval {
+            name,
+            reference,
+            runs,
+            as_of,
+            no_cache,
+        }) => {
+            let ws = Workspace::load(&ws_dir)?;
+            let refs = pmx::eval::read_reference(&reference)?;
+            eprintln!(
+                "scoring the reference packages of `{}` with `{name}`…",
+                ws.config.project.name
+            );
+            let report = pmx::eval::eval(
+                &ws,
+                &refs,
+                &pmx::eval::EvalOptions {
+                    classifier: name,
+                    as_of: as_of.unwrap_or_else(today),
+                    runs,
+                    use_cache: !no_cache,
+                },
+            )?;
+            print!("{}", pmx::eval::render(&report));
+            if report.verdict().is_err() {
+                return Err(anyhow::anyhow!("the classifier did not pass"));
+            }
+        }
         Command::Classifier(ClassifierCommand::Test { name }) => {
             let ws = Workspace::load(&ws_dir)?;
             eprintln!("asking `{name}` about a fictional package (a nullable field on an entity and its DTO)…");

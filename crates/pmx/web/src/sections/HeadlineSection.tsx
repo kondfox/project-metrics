@@ -5,7 +5,7 @@ import { Tile, TileGrid } from "../components/tiles/Tile";
 import { Section } from "../components/ui/Section";
 import { formatNumber, formatPercent } from "../lib/format";
 import { useDashboard } from "../state/hooks";
-import { velocityNote } from "./VelocitySection";
+import { velocityNote } from "../metrics/velocity";
 
 /** The fleet headlines for this project (fleet-vision.md). */
 export function HeadlineSection() {

@@ -16,7 +16,7 @@ use pm_classify::{Classifier, FileClass};
 use pm_config::{DataPolicy, FteSource, Identity, RepoRole, Workspace, expand_path};
 use pm_git::{Commit, Git, LogRange};
 use pm_llm::{Facts, Provider, QuestionSet, Response};
-use pm_metrics::model::VelocityDetail;
+use pm_metrics::model::{VelocityDetail, VelocityHealth};
 use pm_metrics::velocity::{FtePeriod, Package, VelocityOptions};
 use pm_progress::Progress;
 use regex::Regex;
@@ -426,38 +426,110 @@ fn pick_classifier(p: &WorkPackage, repos: &[VelocityRepo]) -> Option<String> {
         .and_then(|r| r.classifier.clone())
 }
 
-struct Job {
-    index: usize,
-    classifier: String,
-    key: String,
-    prepared: Prepared,
+/// Read, group, prepare and classify. `Ok(None)` = not measured (no classifier configured).
+/// The configured classifiers, built once per run. One that cannot be built (a missing API key)
+/// leaves its packages unscored instead of failing the run.
+pub struct Classifiers<'a> {
+    config: &'a pm_config::Config,
+    providers: BTreeMap<String, std::result::Result<Box<dyn Provider>, String>>,
 }
 
-/// Read, group, prepare and classify. `Ok(None)` = not measured (no classifier configured).
-pub fn run_stage(s: &VelocitySettings, repos: &[VelocityRepo]) -> Result<Option<VelocityDetail>> {
-    let p = &s.progress;
-    if !configured(s.ws) {
-        return Ok(None);
+impl<'a> Classifiers<'a> {
+    /// `names` and their fallbacks.
+    pub fn build<'n>(config: &'a pm_config::Config, names: impl IntoIterator<Item = &'n str>) -> Classifiers<'a> {
+        let mut providers = BTreeMap::new();
+        let mut todo: Vec<String> = names.into_iter().map(String::from).collect();
+        while let Some(name) = todo.pop() {
+            if providers.contains_key(&name) {
+                continue;
+            }
+            let Some(c) = config.classifiers.get(&name) else {
+                providers.insert(name.clone(), Err(format!("no [classifiers.{name}]")));
+                continue;
+            };
+            if let Some(f) = &c.fallback {
+                todo.push(f.clone());
+            }
+            providers.insert(name, pm_llm::build(c).map_err(|e| e.to_string()));
+        }
+        Classifiers { config, providers }
     }
-    let config = &s.ws.config;
-    let set = QuestionSet::six_axis();
-    let since = since(s.ws);
-    p.start(VELOCITY);
-    p.detail(VELOCITY, "reading commits".to_string());
 
-    // Providers, once each.
-    let mut providers: BTreeMap<String, Box<dyn Provider>> = BTreeMap::new();
-    for name in repos.iter().filter_map(|r| r.classifier.as_ref()) {
-        if !providers.contains_key(name) {
-            let c = &config.classifiers[name];
-            providers.insert(
-                name.clone(),
-                pm_llm::build(c).map_err(|e| anyhow!("[classifiers.{name}]: {e}"))?,
-            );
+    pub fn get(&self, name: &str) -> std::result::Result<&dyn Provider, String> {
+        match self.providers.get(name) {
+            Some(Ok(p)) => Ok(p.as_ref()),
+            Some(Err(e)) => Err(e.clone()),
+            None => Err(format!("classifier `{name}` not built")),
         }
     }
 
-    // Commits → packages.
+    /// The fallback `name` may escalate to for a package: none when the data policy forbids it.
+    fn fallback(&self, name: &str, local_only: bool) -> Option<&dyn Provider> {
+        let f = self.config.classifiers.get(name)?.fallback.as_deref()?;
+        self.get(f).ok().filter(|p| !local_only || p.local())
+    }
+
+    /// Everything that decides an answer besides the package: the cache key's classifier part.
+    pub fn key(&self, name: &str, local_only: bool) -> std::result::Result<String, String> {
+        let primary = self.get(name)?.identity();
+        let gate = self.config.classifiers.get(name).and_then(|c| c.confidence_gate);
+        let fallback = self.fallback(name, local_only).map(|f| f.identity());
+        Ok(match (gate, fallback) {
+            (None, None) => primary,
+            (g, f) => format!(
+                "{primary}|gate={}|fallback={}",
+                g.map_or("-".into(), |g| g.to_string()),
+                f.unwrap_or_else(|| "-".into())
+            ),
+        })
+    }
+
+    /// Classify one package: the confidence gate, one retry for a bad answer or a timeout, and an
+    /// answer that does not score counts as a failure.
+    pub fn ask(&self, name: &str, local_only: bool, set: &QuestionSet, prepared: &Prepared) -> Result<pm_llm::Gated> {
+        let primary = self.get(name).map_err(|e| anyhow!(e))?;
+        let gate = self.config.classifiers.get(name).and_then(|c| c.confidence_gate);
+        let fallback = self.fallback(name, local_only);
+        let req = set.request(prepared.state.clone());
+        let once = || pm_llm::classify_gated(primary, fallback, gate, &set.context, &req);
+        let g = once().or_else(|e| {
+            if matches!(e, pm_llm::Error::Answer(_) | pm_llm::Error::Timeout(_)) {
+                std::thread::sleep(Duration::from_secs(2));
+                once()
+            } else {
+                Err(e)
+            }
+        })?;
+        set.axes(&g.response.answers, &prepared.facts)?;
+        Ok(g)
+    }
+}
+
+/// A cached answer. Entries from before the gate (a bare response) still read.
+pub fn cached_answer(cache: &Cache, key: &str, classifier: &str) -> Result<Option<pm_llm::Gated>> {
+    let Some(v) = cache.answer::<serde_json::Value>(key)? else {
+        return Ok(None);
+    };
+    if let Ok(g) = serde_json::from_value::<pm_llm::Gated>(v.clone()) {
+        return Ok(Some(g));
+    }
+    Ok(serde_json::from_value::<Response>(v)
+        .ok()
+        .map(|response| pm_llm::Gated {
+            response,
+            classifier: classifier.to_string(),
+            reasked: false,
+            escalated: false,
+            low_confidence: false,
+        }))
+}
+
+/// Commits since `since` → work packages, with each repo's git handle.
+pub fn read_packages(
+    s: &VelocitySettings,
+    repos: &[VelocityRepo],
+    since: NaiveDate,
+) -> Result<(Vec<WorkPackage>, Vec<Git>)> {
     let gits: Vec<Git> = repos.iter().map(|r| Git::open(&r.dir)).collect();
     let mut commits = Vec::new();
     for (i, r) in repos.iter().enumerate() {
@@ -480,9 +552,77 @@ pub fn run_stage(s: &VelocitySettings, repos: &[VelocityRepo]) -> Result<Option<
             });
         }
     }
-    let packages = group(commits);
-    p.plan(VELOCITY, packages.len() as u64, 0, false);
+    Ok((group(commits), gits))
+}
 
+/// Prepare one package for its classifier (`None`: no classifier for its repos).
+pub fn prepare_package(
+    wp: &WorkPackage,
+    repos: &[VelocityRepo],
+    gits: &[Git],
+    cls: &Classifier,
+) -> Result<(Prepared, Option<String>, bool)> {
+    let prepared = prepare(wp, repos, gits, cls)?;
+    let local_only = wp.commits.iter().any(|c| repos[c.repo].local_only);
+    Ok((prepared, pick_classifier(wp, repos), local_only))
+}
+
+fn row(wp: &WorkPackage, prepared: &Prepared) -> Package {
+    let mut authors: BTreeMap<String, u32> = BTreeMap::new();
+    for c in &wp.commits {
+        *authors.entry(c.person.clone()).or_default() += 1;
+    }
+    Package {
+        id: wp.id.clone(),
+        date: wp.date(),
+        repos: prepared.repos.clone(),
+        commits: wp.commits.len() as u32,
+        added: prepared.added,
+        description: prepared.description.clone(),
+        axes: None,
+        points: None,
+        size: None,
+        tests: prepared.tests,
+        truncated: prepared.truncated,
+        classifier: None,
+        model: None,
+        escalated: false,
+        low_confidence: false,
+        author: wp.author.clone(),
+        authors,
+    }
+}
+
+struct Job {
+    index: usize,
+    classifier: String,
+    local_only: bool,
+    key: String,
+    prepared: Prepared,
+}
+
+/// Read, group, prepare and classify. `Ok(None)` = not measured (no classifier configured).
+pub fn run_stage(s: &VelocitySettings, repos: &[VelocityRepo]) -> Result<Option<VelocityDetail>> {
+    let p = &s.progress;
+    if !configured(s.ws) {
+        return Ok(None);
+    }
+    let config = &s.ws.config;
+    let set = QuestionSet::six_axis();
+    let since = since(s.ws);
+    p.start(VELOCITY);
+    p.detail(VELOCITY, "reading commits".to_string());
+    let classifiers = Classifiers::build(config, repos.iter().filter_map(|r| r.classifier.as_deref()));
+    for (name, built) in &classifiers.providers {
+        if let Err(e) = built {
+            p.warn(format!(
+                "classifier `{name}` cannot run ({e}): its packages are not scored"
+            ));
+        }
+    }
+
+    let (packages, gits) = read_packages(s, repos, since)?;
+    p.plan(VELOCITY, packages.len() as u64, 0, false);
     let cache = if s.use_cache {
         Some(Cache::open(&s.ws.state_dir().join("cache.sqlite"))?)
     } else {
@@ -490,59 +630,40 @@ pub fn run_stage(s: &VelocitySettings, repos: &[VelocityRepo]) -> Result<Option<
     };
     let mut rows: Vec<Package> = Vec::with_capacity(packages.len());
     let mut jobs = Vec::new();
-    let mut used = BTreeSet::new();
     let mut refused = 0usize;
     let mut cached = 0u64;
     for (index, wp) in packages.iter().enumerate() {
-        let prepared = prepare(wp, repos, &gits, s.classifier)?;
-        rows.push(Package {
-            id: wp.id.clone(),
-            date: wp.date(),
-            repos: prepared.repos.clone(),
-            commits: wp.commits.len() as u32,
-            added: prepared.added,
-            description: prepared.description.clone(),
-            axes: None,
-            points: None,
-            size: None,
-            tests: prepared.tests,
-            truncated: prepared.truncated,
-            classifier: None,
-            model: None,
-            author: wp.author.clone(),
-        });
-        let Some(name) = pick_classifier(wp, repos) else {
+        let (prepared, name, local_only) = prepare_package(wp, repos, &gits, s.classifier)?;
+        rows.push(row(wp, &prepared));
+        let Some(name) = name else {
             p.advance(VELOCITY, 1);
             continue;
         };
-        let provider = &providers[&name];
-        let local_only = wp.commits.iter().any(|c| repos[c.repo].local_only);
+        let Ok(provider) = classifiers.get(&name) else {
+            p.advance(VELOCITY, 1);
+            continue;
+        };
         if local_only && !provider.local() {
             refused += 1;
             p.advance(VELOCITY, 1);
             continue;
         }
-        let key = answer_key(
-            &config.project.name,
-            &wp.id,
-            &prepared.state,
-            &set.id,
-            &provider.identity(),
-        );
+        let identity = classifiers.key(&name, local_only).map_err(|e| anyhow!(e))?;
+        let key = answer_key(&config.project.name, &wp.id, &prepared.state, &set.id, &identity);
         let hit = match &cache {
-            Some(c) => c.answer::<Response>(&key)?,
+            Some(c) => cached_answer(c, &key, &provider.identity())?,
             None => None,
         };
         match hit {
-            Some(resp) => {
-                score_row(&mut rows[index], &set, &resp, &prepared.facts, &provider.identity());
-                used.insert(provider.identity());
+            Some(g) => {
+                score_row(&mut rows[index], &set, &g, &prepared.facts);
                 cached += 1;
                 p.advance(VELOCITY, 1);
             }
             None => jobs.push(Job {
                 index,
                 classifier: name,
+                local_only,
                 key,
                 prepared,
             }),
@@ -553,24 +674,24 @@ pub fn run_stage(s: &VelocitySettings, repos: &[VelocityRepo]) -> Result<Option<
     // Classify the misses, each classifier on its own pool.
     let started = Instant::now();
     let errors: Mutex<BTreeMap<String, (usize, String)>> = Mutex::new(BTreeMap::new());
-    let results: Mutex<Vec<(usize, Response)>> = Mutex::new(Vec::new());
+    let results: Mutex<Vec<(usize, pm_llm::Gated)>> = Mutex::new(Vec::new());
     let by_classifier: BTreeMap<&str, Vec<&Job>> = jobs.iter().fold(BTreeMap::new(), |mut m, j| {
         m.entry(j.classifier.as_str()).or_default().push(j);
         m
     });
+    let cache_path = s.ws.state_dir().join("cache.sqlite");
     std::thread::scope(|scope| {
         for (name, list) in &by_classifier {
-            let provider = &providers[*name];
             let workers = config.classifiers[*name].jobs.unwrap_or(DEFAULT_JOBS).clamp(1, 32);
             let next = AtomicUsize::new(0);
             let failures_in_a_row = AtomicUsize::new(0);
-            let (errors, results, cache_path, set) = (&errors, &results, s.ws.state_dir().join("cache.sqlite"), &set);
+            let (errors, results, cache_path, set, classifiers) = (&errors, &results, &cache_path, &set, &classifiers);
             let use_cache = s.use_cache;
             scope.spawn(move || {
                 std::thread::scope(|inner| {
                     for _ in 0..workers.min(list.len()) {
                         inner.spawn(|| {
-                            let cache = if use_cache { Cache::open(&cache_path).ok() } else { None };
+                            let cache = if use_cache { Cache::open(cache_path).ok() } else { None };
                             loop {
                                 let i = next.fetch_add(1, Ordering::SeqCst);
                                 let Some(job) = list.get(i) else { break };
@@ -579,31 +700,20 @@ pub fn run_stage(s: &VelocitySettings, repos: &[VelocityRepo]) -> Result<Option<
                                     continue;
                                 }
                                 p.detail(VELOCITY, format!("{name}: package {}/{}", i + 1, list.len()));
-                                let req = set.request(job.prepared.state.clone());
-                                let answer = provider.classify(&set.context, &req).or_else(|e| {
-                                    if matches!(e, pm_llm::Error::Answer(_) | pm_llm::Error::Timeout(_)) {
-                                        std::thread::sleep(Duration::from_secs(2));
-                                        provider.classify(&set.context, &req)
-                                    } else {
-                                        Err(e)
-                                    }
-                                });
-                                // An answer that does not score is a failure too.
-                                let answer = answer.and_then(|r| set.axes(&r.answers, &job.prepared.facts).map(|_| r));
-                                match answer {
-                                    Ok(r) => {
+                                match classifiers.ask(name, job.local_only, set, &job.prepared) {
+                                    Ok(g) => {
                                         failures_in_a_row.store(0, Ordering::SeqCst);
                                         if let Some(c) = &cache {
-                                            if let Err(e) = c.put_answer(&job.key, &r) {
+                                            if let Err(e) = c.put_answer(&job.key, &g) {
                                                 p.warn(format!("cannot cache an answer: {e:#}"));
                                             }
                                         }
-                                        results.lock().unwrap_or_else(|e| e.into_inner()).push((job.index, r));
+                                        results.lock().unwrap_or_else(|e| e.into_inner()).push((job.index, g));
                                     }
                                     Err(e) => {
                                         failures_in_a_row.fetch_add(1, Ordering::SeqCst);
                                         let mut errs = errors.lock().unwrap_or_else(|e| e.into_inner());
-                                        let entry = errs.entry(name.to_string()).or_insert((0, e.to_string()));
+                                        let entry = errs.entry(name.to_string()).or_insert((0, format!("{e:#}")));
                                         entry.0 += 1;
                                     }
                                 }
@@ -619,39 +729,47 @@ pub fn run_stage(s: &VelocitySettings, repos: &[VelocityRepo]) -> Result<Option<
         c.record_timing(VELOCITY, jobs.len() as u64, started.elapsed().as_secs_f64())?;
     }
     let by_index: BTreeMap<usize, &Job> = jobs.iter().map(|j| (j.index, j)).collect();
-    for (index, r) in results.into_inner().unwrap_or_else(|e| e.into_inner()) {
-        let job = by_index[&index];
-        let identity = providers[&job.classifier].identity();
-        score_row(&mut rows[index], &set, &r, &job.prepared.facts, &identity);
-        used.insert(identity);
+    for (index, g) in results.into_inner().unwrap_or_else(|e| e.into_inner()) {
+        score_row(&mut rows[index], &set, &g, &by_index[&index].prepared.facts);
     }
     p.finish(VELOCITY);
 
     for (name, (n, first)) in errors.into_inner().unwrap_or_else(|e| e.into_inner()) {
         p.warn(format!("classifier `{name}`: {n} package(s) failed ({first})"));
     }
-    let unscored = rows.iter().filter(|r| r.points.is_none()).count();
     if refused > 0 {
         p.warn(format!(
             "{refused} package(s) touch a local-only repo but their classifier is not local: not scored"
         ));
     }
-    if unscored > 0 {
+    let health = health(&rows);
+    if health.unscored > 0 {
         p.warn(format!(
-            "{unscored} of {} work packages not scored: Velocity is empty for the weeks and months that hold them (run collect again to retry)",
-            rows.len()
+            "{} of {} work packages not scored: Velocity is empty for the weeks and months that hold them (run collect again to retry)",
+            health.unscored, health.packages
         ));
     }
-    if used.len() > 1 {
+    let classifiers_used: BTreeSet<String> = rows.iter().filter_map(|r| r.classifier.clone()).collect();
+    if classifiers_used.len() > 1 {
         p.warn(format!(
             "Velocity mixes classifiers ({}): their scores are not strictly comparable",
-            used.iter().cloned().collect::<Vec<_>>().join(", ")
+            classifiers_used.iter().cloned().collect::<Vec<_>>().join(", ")
+        ));
+    }
+    let models: BTreeSet<String> = rows.iter().filter_map(|r| r.model.clone()).collect();
+    if models.len() > classifiers_used.len().max(1) {
+        p.warn(format!(
+            "work packages were answered by {} models ({}): a declined request may have run on a fallback model",
+            models.len(),
+            models.iter().cloned().collect::<Vec<_>>().join(", ")
         ));
     }
     rows.sort_by(|a, b| b.date.cmp(&a.date).then(a.id.cmp(&b.id)));
     Ok(Some(VelocityDetail {
         rubric: set.id.clone(),
-        classifiers: used.into_iter().collect(),
+        classifiers: classifiers_used.into_iter().collect(),
+        models: models.into_iter().collect(),
+        health,
         options: VelocityOptions {
             since,
             as_of: s.as_of,
@@ -661,13 +779,24 @@ pub fn run_stage(s: &VelocitySettings, repos: &[VelocityRepo]) -> Result<Option<
     }))
 }
 
-fn score_row(row: &mut Package, set: &QuestionSet, r: &Response, facts: &Facts, classifier: &str) {
-    if let Ok(axes) = set.axes(&r.answers, facts) {
+fn score_row(row: &mut Package, set: &QuestionSet, g: &pm_llm::Gated, facts: &Facts) {
+    if let Ok(axes) = set.axes(&g.response.answers, facts) {
         row.axes = Some(axes.0);
         row.points = Some(axes.points());
         row.size = Some(axes.size().0.to_string());
-        row.classifier = Some(classifier.to_string());
-        row.model = Some(r.model.clone());
+        row.classifier = Some(g.classifier.clone());
+        row.model = Some(g.response.model.clone());
+        row.escalated = g.escalated;
+        row.low_confidence = g.low_confidence;
+    }
+}
+
+fn health(rows: &[Package]) -> VelocityHealth {
+    VelocityHealth {
+        packages: rows.len() as u32,
+        unscored: rows.iter().filter(|r| r.points.is_none()).count() as u32,
+        escalated: rows.iter().filter(|r| r.escalated).count() as u32,
+        low_confidence: rows.iter().filter(|r| r.low_confidence).count() as u32,
     }
 }
 

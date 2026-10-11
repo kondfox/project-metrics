@@ -453,8 +453,13 @@ schema for every provider. Design: [tool-implementation-plan.md §6](tool-implem
 - **Low confidence:** re-ask once with reordered levels; then the configured fallback (if the data policy
   allows), flagged in the output.
 - No classifier configured → Velocity is `null` (not 0).
-- **Built providers (2026-10-11):** `claude-code` (the Claude Code CLI under the user's login, plan D26)
-  and `command`. The state lists files (≤ 200) and subjects (≤ 50) and carries no person names.
+- **Providers (2026-10-11):** `claude-code` (the Claude Code CLI under the user's login, plan D28),
+  `command`, `jev`, `anthropic`, `openai-compatible` (plan D30). The state lists files (≤ 200) and
+  subjects (≤ 50) and carries no person names.
+- **Low confidence (built, plan D31):** gated only when the provider's confidence means something (Jev,
+  logprobs, sampled). Packages record `escalated` / `low_confidence`; `velocity.health` counts them.
+- **Per-person points** (`leads.json` `points{bucket → person → points}`): each package's points split by
+  its commits. Lead-only, never a headline.
 
 ### 10.4 Code-host adapter (PR/MR)
 - Interface: `merged_prs(project, since, selection, until, files) → [{ id, author{login, name?, bot},

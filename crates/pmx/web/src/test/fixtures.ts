@@ -102,6 +102,7 @@ export const fixtureLeads: LeadsFile = {
   schema: "pmx.leads/1",
   project: "Acme Shop",
   people: { p1: "Jane Doe" },
+  points: { "2026-09": { "Jane Doe": 4.5, "Sam Doe": 1.5 } },
   leaders: {
     "2026-09": [
       {
@@ -191,10 +192,14 @@ export function fixtureWithVelocity(): ProjectFile {
     truncated: false,
     classifier: "claude-code:claude-sonnet-5-5:pmx-prompt@1",
     model: "claude-sonnet-5-5",
+    escalated: false,
+    low_confidence: false,
   });
   p.velocity = {
     rubric: "six-axis@2",
     classifiers: ["claude-code:claude-sonnet-5-5:pmx-prompt@1"],
+    models: ["claude-sonnet-5-5"],
+    health: { packages: 3, unscored: 0, escalated: 0, low_confidence: 0 },
     options: { since: "2026-08-01", as_of: "2026-09-30", fte: [{ from: null, to: null, fte: 2 }] },
     packages: [
       pkg("SHOP-42", "2026-09-24", 3, "SHOP-42 Order totals honour regional tax rules"),
