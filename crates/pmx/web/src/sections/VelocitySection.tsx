@@ -90,7 +90,7 @@ export function VelocitySection() {
           ]}
         />
       </ChartGrid>
-      <PackagesTable packages={inRange.slice(0, 25)} total={inRange.length} />
+      <PackagesTable packages={inRange} />
       {points && <PointsTable points={points} />}
     </Section>
   );

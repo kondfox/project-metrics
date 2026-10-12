@@ -24,4 +24,22 @@ describe("<DataTable>", () => {
     expect(body.map((r) => r.textContent)).toEqual(["Ann1200", "Bo40"]);
     expect(table).toHaveTextContent("lead only");
   });
+
+  it("scrolls in a box of `visibleRows` rows, with every row rendered and the caption below", () => {
+    const rows = Array.from({ length: 30 }, (_, i) => ({ n: i }));
+    render(
+      <DataTable
+        label="many"
+        rows={rows}
+        rowKey={(r) => String(r.n)}
+        columns={[{ header: "N", cell: (r) => r.n }]}
+        caption="30 rows"
+        visibleRows={10}
+      />,
+    );
+    const table = screen.getByRole("table", { name: "many" });
+    expect(within(table).getAllByRole("row")).toHaveLength(31);
+    expect(table).not.toHaveTextContent("30 rows");
+    expect(screen.getByText("30 rows")).toBeInTheDocument();
+  });
 });
