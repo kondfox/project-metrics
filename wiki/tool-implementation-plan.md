@@ -631,7 +631,9 @@ exports the full dashboard. CI gains a Windows build. The guided `pmx init` (D43
 `crates/pmx/src/wizard.rs`; `tests/cli.rs` `guided_init` drives it with scripted answers). User docs in
 `docs/`: getting started, Velocity, fleet, troubleshooting, releasing, and the onboarding-test protocol;
 a rewritten README. The tap repo `kondfox/homebrew-tap` and the `HOMEBREW_TAP_TOKEN` secret exist (2026-10-12).
-**Left:** the first tagged release (the Linux, Windows and Intel-mac builds have not run yet), then the exit criterion: the protocol in `docs/onboarding-test.md` with someone new.
+**First release `v0.1.0` (2026-10-12):** all five targets built, the GitHub Release has the archives
+and installers, the formula is in the tap, and `brew install kondfox/tap/pmx` installs a binary whose
+dashboard is the full app. **Left:** the exit criterion: the protocol in `docs/onboarding-test.md` with someone new.
 
 **Testing:**
 - **Synthetic fixture repos**, built by the tests themselves with scripted authors, dates and file trees
