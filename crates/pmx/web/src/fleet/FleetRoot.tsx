@@ -31,7 +31,7 @@ export function FleetRoot({ data, engine }: { data: FleetData; engine: FleetEngi
       <DashboardProvider
         key={key}
         project={project}
-        leads={null}
+        leads={data.leads?.[key] ?? null}
         engine={engine?.projects[key] ?? null}
         fleetKey={key}
       >

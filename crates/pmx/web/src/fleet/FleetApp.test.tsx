@@ -1,14 +1,15 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { fixtureFleet } from "../test/fixtures";
+import type { LeadsFile } from "../data/types";
+import { fixtureFleet, fixtureLeads } from "../test/fixtures";
 import { FleetRoot } from "./FleetRoot";
 
 // ECharts needs a real layout engine; the chart options are tested on their own.
 vi.mock("../components/charts/EChart", () => ({ EChart: () => <div data-testid="chart" /> }));
 
-function renderFleet() {
+function renderFleet(leads: Record<string, LeadsFile> | null = null) {
   const { fleet, projects } = fixtureFleet();
-  return render(<FleetRoot data={{ kind: "fleet", fleet, projects, wasm: null }} engine={null} />);
+  return render(<FleetRoot data={{ kind: "fleet", fleet, projects, leads, wasm: null }} engine={null} />);
 }
 
 const row = (name: string) => screen.getByRole("row", { name: new RegExp(`^${name}`) });
@@ -50,6 +51,15 @@ describe("<FleetRoot>", () => {
     renderFleet();
     expect(screen.getByRole("heading", { name: "Acme Shop" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Range" })).toHaveValue("month");
+  });
+
+  it("shows a project's people only in the lead's own copy", () => {
+    window.history.replaceState(null, "", "#p=shop&monthly&2026-09-01..2026-09-30");
+    const { unmount } = renderFleet();
+    expect(screen.queryByRole("table", { name: "Multi-stack leaders" })).not.toBeInTheDocument();
+    unmount();
+    renderFleet({ shop: fixtureLeads });
+    expect(screen.getByRole("table", { name: "Multi-stack leaders" })).toHaveTextContent("Jane Doe");
   });
 
   it("ignores an unknown project", () => {

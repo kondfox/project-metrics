@@ -159,7 +159,8 @@ enum Command {
 
 #[derive(Subcommand)]
 enum FleetCommand {
-    /// Serve the fleet page on http://127.0.0.1 (re-reads every project.json on reload).
+    /// Serve the fleet page on http://127.0.0.1 (re-reads every project.json on reload; includes
+    /// each project's private lead view, since only this machine can connect).
     Serve {
         #[command(flatten)]
         manifest: ManifestArg,
@@ -172,9 +173,14 @@ enum FleetCommand {
     Export {
         #[command(flatten)]
         manifest: ManifestArg,
-        /// Folder to write into (default: out/ next to the manifest).
+        /// Folder to write into (default: out/ next to the manifest; out/private/ with
+        /// --with-private).
         #[arg(long, short)]
         output: Option<PathBuf>,
+        /// Write only fleet.html, with each project's per-person lead view
+        /// (out/private/leads.json). Don't share that file.
+        #[arg(long)]
+        with_private: bool,
     },
 }
 
@@ -1012,15 +1018,27 @@ fn run(cli: Cli) -> Result<()> {
                 pmx::dashboard::open_browser(&url);
             }
             pmx::dashboard::serve_page(listener, &|| {
-                pmx::fleet::Fleet::load(&manifest, now_rfc3339())?.render()
+                pmx::fleet::Fleet::load(&manifest, now_rfc3339())?
+                    .with_private()?
+                    .render()
             })?;
         }
-        Command::Fleet(FleetCommand::Export { manifest, output }) => {
+        Command::Fleet(FleetCommand::Export {
+            manifest,
+            output,
+            with_private,
+        }) => {
             let manifest = ws_dir.join(manifest.manifest);
             let fleet = load_fleet(&manifest)?;
-            let dir = output.unwrap_or_else(|| manifest.parent().unwrap_or(Path::new(".")).join("out"));
+            let out = manifest.parent().unwrap_or(Path::new(".")).join("out");
+            let dir = output.unwrap_or_else(|| if with_private { out.join("private") } else { out });
             std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
-            for (name, body) in [("fleet.json", fleet.json()), ("fleet.html", fleet.render()?)] {
+            let files = if with_private {
+                vec![("fleet.html", fleet.with_private()?.render()?)]
+            } else {
+                vec![("fleet.json", fleet.json()), ("fleet.html", fleet.render()?)]
+            };
+            for (name, body) in files {
                 let dest = dir.join(name);
                 std::fs::write(&dest, body).with_context(|| format!("writing {}", dest.display()))?;
                 eprintln!("wrote {}", dest.display());

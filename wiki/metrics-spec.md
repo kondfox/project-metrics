@@ -582,7 +582,10 @@ Values are unrounded; `null` means no data.
 
 ### 10.8 Fleet (`fleet.json`, decided 2026-10-11, plan D33–D35)
 A local fleet combines project workspaces listed in `fleet.toml` (`name`, `projects = [folders]`), reading
-each `out/project.json`, never `out/private/`. Every project keeps its own metrics; the **fleet row** pools:
+each `out/project.json`; the shareable `fleet.json` and `fleet.html` never read `out/private/`. Only the
+lead's own copy (`pmx fleet serve`, or `pmx fleet export --with-private` → `out/private/fleet.html`) adds each
+project's `private/leads.json`, so its project dashboards show people (plan D40). Every project keeps its
+own metrics; the **fleet row** pools:
 - **Flow ratios** (Quality and its constituents, multi-stack, commits, active devs): Σ numerators ÷ Σ
   denominators over all projects, each project's people under its own `breadth_roles`. Pseudonymous ids
   are per project, so one person in two projects counts twice.

@@ -42,7 +42,9 @@ Several projects make a **fleet**: a `fleet.toml` lists their workspace folders
 ```sh
 cd ~/metrics
 pmx fleet serve --open       # every project's headlines side by side; click one for its dashboard
+                             # (local only, so the dashboards include each project's people)
 pmx fleet export             # out/fleet.json + out/fleet.html (one shareable page, no per-person data)
+pmx fleet export --with-private  # out/private/fleet.html: with people, for the lead only
 ```
 
 `collect` writes `out/project.json` (team level; people are pseudonymous ids) and

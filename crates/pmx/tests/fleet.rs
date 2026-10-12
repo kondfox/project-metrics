@@ -176,6 +176,24 @@ fn exports_the_pooled_fleet_and_one_shareable_page() {
 }
 
 #[test]
+fn the_leads_copy_names_people_and_leaves_the_shared_page_alone() {
+    let f = fleet();
+    assert!(pmx(&f.dir, &["fleet", "export", "--with-private"]).status.success());
+    assert!(
+        !f.dir.join("out/fleet.html").exists(),
+        "the private export writes only its own copy"
+    );
+    let page = std::fs::read_to_string(f.dir.join("out/private/fleet.html")).unwrap();
+    let open = r#"<script id="pmx-data" type="application/json">"#;
+    let start = page.find(open).unwrap() + open.len();
+    let data: serde_json::Value =
+        serde_json::from_str(&page[start..start + page[start..].find("</script>").unwrap()]).unwrap();
+    assert_eq!(data["leads"]["ws"]["schema"], "pmx.leads/1");
+    assert_eq!(data["leads"]["ws-2"]["schema"], "pmx.leads/1");
+    assert!(page.contains("Jane Doe"), "the lead's copy names people");
+}
+
+#[test]
 fn reports_a_missing_project() {
     let f = fleet();
     std::fs::remove_file(f.crm.join("out/project.json")).unwrap();

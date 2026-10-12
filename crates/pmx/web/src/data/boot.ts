@@ -14,8 +14,11 @@ export interface DashboardData {
 export interface FleetData {
   kind: "fleet";
   fleet: FleetFile;
-  /** Key (as in `fleet.projects`) → project. Never with `leads.json`: fleet pages are shared. */
+  /** Key (as in `fleet.projects`) → project. */
   projects: Record<string, ProjectFile>;
+  /** Key → the project's private lead view: only the lead's own copy (`fleet serve`,
+   * `fleet export --with-private`); null in the shareable page. */
+  leads: Record<string, LeadsFile> | null;
   wasm: Uint8Array | null;
 }
 
@@ -25,7 +28,8 @@ interface Injected {
   project?: ProjectFile;
   fleet?: FleetFile;
   projects?: Record<string, ProjectFile>;
-  leads: LeadsFile | null;
+  /** A project's lead view, or key → lead view on a fleet page. */
+  leads: LeadsFile | Record<string, LeadsFile> | null;
   /** base64 */
   wasm: string;
 }
@@ -39,8 +43,16 @@ function fromBase64(b64: string): Uint8Array | null {
 }
 
 function fromInjected(data: Injected, wasm: Uint8Array | null): PageData {
-  if (data.fleet && data.projects) return { kind: "fleet", fleet: data.fleet, projects: data.projects, wasm };
-  if (data.project) return { kind: "project", project: data.project, leads: data.leads, wasm };
+  if (data.fleet && data.projects)
+    return {
+      kind: "fleet",
+      fleet: data.fleet,
+      projects: data.projects,
+      leads: data.leads as Record<string, LeadsFile> | null,
+      wasm,
+    };
+  if (data.project)
+    return { kind: "project", project: data.project, leads: data.leads as LeadsFile | null, wasm };
   throw new Error("this page's data is neither a project nor a fleet");
 }
 
