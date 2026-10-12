@@ -10,7 +10,7 @@ const CADENCES = [
 ] as const;
 
 /** Cadence and time range. Presets and dates set the range the tiles summarize. */
-export function Controls(props: { subject?: string }) {
+export function Controls(props: { subject?: string; fleet?: boolean }) {
   const { cadence, setCadence, preset, setPreset, range, setRange, rangeContext, hasEngine } = useView();
   const min = formatDate(rangeContext.start);
   const max = formatDate(rangeContext.asOf);
@@ -49,8 +49,9 @@ export function Controls(props: { subject?: string }) {
         onChange={(e) => onDate("end", e.target.value)}
       />
       <span className={styles.legend}>
-        {props.subject ?? "tiles"}: {formatDate(range.start)} – {formatDate(range.end)} · charts:{" "}
-        {cadence === "week" ? "weeks" : "months"} up to the range end · * in progress · hollow = low n
+        {props.subject ?? "tiles"}: {formatDate(range.start)} – {formatDate(range.end)} ·{" "}
+        {props.fleet ? "trend lines" : "charts"}: {cadence === "week" ? "weeks" : "months"} up to the range
+        end · {props.fleet ? "▲▼ against the period before" : "* in progress · hollow = low n"}
       </span>
     </div>
   );

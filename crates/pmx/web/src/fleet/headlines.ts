@@ -23,18 +23,18 @@ export interface Headline {
 /** The fleet's columns (fleet-vision.md, metrics-overview.md "Fleet headlines"). */
 export const HEADLINES: readonly Headline[] = [
   {
+    id: "velocity",
+    label: "Velocity",
+    input: "velocity",
+    pooling: "Σ points ÷ Σ FTE-days, only across projects scored the same way",
+  },
+  {
     id: "quality",
     higherIsBetter: true,
     label: "Quality",
     input: "quality",
     score: true,
     pooling: "pooled numerators and denominators",
-  },
-  {
-    id: "velocity",
-    label: "Velocity",
-    input: "velocity",
-    pooling: "Σ points ÷ Σ FTE-days, only across projects scored the same way",
   },
   {
     id: "security_score",

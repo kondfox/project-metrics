@@ -33,25 +33,8 @@ export function useFleetRange(): FleetRange {
   }, [fleet, projects, engine, range, rangeContext]);
 }
 
-export function useFleetLowN(): (n: number | null | undefined) => boolean {
-  const threshold = useFleet().fleet.low_n_threshold;
-  return useCallback((n) => n != null && n < threshold, [threshold]);
-}
-
-/** The fleet's weeks or months in the chart window, and which fall in the selected range. */
-export function useFleetChartBuckets() {
-  const { fleet, cadence, range, rangeContext } = useFleet();
-  return useMemo(() => {
-    const b = fleetBuckets(fleet, cadence);
-    const window = chartWindow(range, rangeContext);
-    const indices = b.ranges.flatMap((r, i) => (r.end >= window.start && r.start <= window.end ? [i] : []));
-    const inRange = indices.map((i) => b.ranges[i]!.end >= range.start && b.ranges[i]!.start <= range.end);
-    return { buckets: b, indices, inRange };
-  }, [fleet, cadence, range, rangeContext]);
-}
-
 /** Projects cover different spans: line a project's buckets up with the fleet's by label. */
-export function alignTo(labels: string[], pb: Buckets) {
+function alignTo(labels: string[], pb: Buckets) {
   const at = new Map(pb.labels.map((l, i) => [l, i]));
   return (xs: Array<number | null> | undefined) =>
     labels.map((l) => {
@@ -60,25 +43,31 @@ export function alignTo(labels: string[], pb: Buckets) {
     });
 }
 
-/** A headline's values over the chart window: a project's (by key) or the fleet row's (null). */
+/**
+ * A headline's values over the chart window (at least a year back to the range end): a project's
+ * (by key) or the fleet row's (null).
+ */
 export function useFleetTrend(): (key: string | null, id: MetricId) => Array<number | null> {
-  const { projects, cadence } = useFleet();
-  const { buckets, indices } = useFleetChartBuckets();
-  const perProject = useMemo(() => {
-    const labels = indices.map((i) => buckets.labels[i]!);
-    const out: Record<string, { pick: ReturnType<typeof alignTo>; series: Buckets["series"] }> = {};
+  const { fleet, projects, cadence, range, rangeContext } = useFleet();
+  const trend = useMemo(() => {
+    const b = fleetBuckets(fleet, cadence);
+    const window = chartWindow(range, rangeContext);
+    const indices = b.ranges.flatMap((r, i) => (r.end >= window.start && r.start <= window.end ? [i] : []));
+    const labels = indices.map((i) => b.labels[i]!);
+    const perProject: Record<string, { pick: ReturnType<typeof alignTo>; series: Buckets["series"] }> = {};
     for (const [key, p] of Object.entries(projects)) {
       const pb = projectBuckets(p, cadence);
-      out[key] = { pick: alignTo(labels, pb), series: pb.series };
+      perProject[key] = { pick: alignTo(labels, pb), series: pb.series };
     }
-    return out;
-  }, [projects, cadence, buckets, indices]);
+    return { b, indices, perProject };
+  }, [fleet, projects, cadence, range, rangeContext]);
   return useCallback(
     (key, id) => {
-      if (key == null) return indices.map((i) => buckets.series[id]?.[i] ?? null);
+      const { b, indices, perProject } = trend;
+      if (key == null) return indices.map((i) => b.series[id]?.[i] ?? null);
       const p = perProject[key];
       return p ? p.pick(p.series[id]) : [];
     },
-    [perProject, buckets, indices],
+    [trend],
   );
 }

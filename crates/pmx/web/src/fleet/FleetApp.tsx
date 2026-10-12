@@ -4,7 +4,6 @@ import { Section } from "../components/ui/Section";
 import layout from "../components/layout/layout.module.css";
 import { useFleet } from "./context";
 import { FleetTable } from "./FleetTable";
-import { FleetTrends } from "./FleetTrends";
 
 function FleetHeader() {
   const { fleet } = useFleet();
@@ -65,12 +64,9 @@ export function FleetApp() {
     <>
       <FleetHeader />
       <FleetNotices />
-      <Controls subject="table" />
+      <Controls subject="table" fleet />
       <Section title="Headlines">
         <FleetTable />
-      </Section>
-      <Section title="Over time">
-        <FleetTrends />
       </Section>
       <FleetFooter />
     </>
