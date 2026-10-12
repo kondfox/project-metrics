@@ -1,11 +1,12 @@
 [package]
 name = "pmx"
-description = "Engineering metrics from git history, with a web dashboard (working name)"
+description = "Engineering metrics from git history, with a web dashboard"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 
 [[bin]]
 name = "pmx"

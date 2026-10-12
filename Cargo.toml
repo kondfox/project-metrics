@@ -8,6 +8,7 @@ edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/kondfox/project-metrics"
+homepage = "https://github.com/kondfox/project-metrics"
 
 [workspace.dependencies]
 pm-classify = { path = "crates/pm-classify" }
@@ -40,3 +41,8 @@ toml_edit = "0.25"
 ureq = "3"
 walkdir = "2"
 zip = { version = "9", default-features = false, features = ["deflate"] }
+
+# Release builds (dist-workspace.toml).
+[profile.dist]
+inherits = "release"
+lto = "thin"

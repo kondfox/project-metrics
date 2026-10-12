@@ -1,0 +1,15 @@
+# Steps dist runs before each release build (dist-workspace.toml, plan D42): the dashboard and the
+# WASM engine must be built into pmx, so a missing one fails the build instead of shipping the
+# placeholder page.
+- name: Add the WASM target
+  run: rustup target add wasm32-unknown-unknown
+- name: Install Node
+  uses: actions/setup-node@v4
+  with:
+    node-version: 22
+- name: Require the dashboard and the WASM engine
+  shell: bash
+  run: |
+    echo "PMX_REQUIRE_WEB=1" >> "$GITHUB_ENV"
+    echo "PMX_REQUIRE_WASM=1" >> "$GITHUB_ENV"
+    echo "PMX_REQUIRE_NODE=1" >> "$GITHUB_ENV"

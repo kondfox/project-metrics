@@ -2,6 +2,12 @@
 
 Plan and milestones: [wiki/tool-implementation-plan.md](wiki/tool-implementation-plan.md).
 
+- **Build from source:** Rust (stable) with the `wasm32-unknown-unknown` target
+  (`rustup target add wasm32-unknown-unknown`), Node ≥ 20.19 and git ≥ 2.30, then
+  `cargo build --release` (the binary is `target/release/pmx`). The build compiles the dashboard and its
+  WASM engine into the binary; without Node or the target pmx still builds, with a placeholder or
+  reduced dashboard.
+- **Releases:** [docs/releasing.md](docs/releasing.md).
 - **Build and test:** `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
   `cargo test --workspace`. Tests build their own fictional git repos; CI runs exactly these. Install
   the `wasm32-unknown-unknown` target (the dashboard's engine) and Node (to check the engine against the

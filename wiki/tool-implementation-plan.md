@@ -9,13 +9,15 @@ mentoring) reproduces it too (M4). M5 (LLM classifier, Velocity) is **built** (2
 provider, the confidence gate, `classifier eval`, Velocity end to end; its exit criterion (a remote and
 a local classifier passing the eval against the private reference set) is still to run, see §8. M6 (local
 fleet) is **done** (2026-10-11): `fleet.toml`, pooling, `pmx fleet serve|export`, the fleet page with
-drill-down, rebuilt from the three pilot projects' workspaces, see §8. Drafted
+drill-down, rebuilt from the three pilot projects' workspaces, see §8. M7 (packaging, guided `init`,
+docs) is **built** (2026-10-12); its exit criterion (someone new onboards in 15 minutes) is still to run,
+see §8. Drafted
 2026-10-08, revised 2026-10-09 with owner decisions.
 **What** to measure is defined by [metrics-spec.md](metrics-spec.md) (source of truth). This page covers
 **how** to build the tool, which runs anywhere and shows its results in a web dashboard. Where this page
 changes the spec, it says so with **⟂ spec change**. The spec must be updated to match before M1.
 
-Working name: **`pmx`** (placeholder).
+Name: **`pmx`** (D41).
 
 ---
 
@@ -65,6 +67,9 @@ in the browser. A second command combines several projects into the **fleet view
 | D38 | **PR membership from git where the host is silent** (owner decision): a GitLab instance returned empty commit lists for most merged MRs (`X-Total` > 0, empty body), and a moved repo's older MRs live in another project. So, after the host's own commit list, a merge commit decides membership: a merge whose SHA is a PR's landed SHA, or whose message names a PR, owns `merge^1..merge^2`'s non-merge commits (earliest merge wins; merges from long-lived branches skipped; MRs of another project path get `<repo>:<path>!<n>`). Then the rebase match and `(#n)` (spec §4 rule 2) | 2026-10-11 |
 | D39 | **Migrations stay in the Velocity diff** (owner decision): the rule "never in the diff: `migrations/` (generated)" is dropped. Hand-written migrations (e.g. Kysely, Knex, SQL files) are the main evidence for R2 and for the `database` layer; dropping them hid schema work from the classifier, and the case-sensitive match left framework-generated `Migrations/` folders in anyway. Packages with migrations get a new state, so their cached answers are not reused | 2026-10-12 |
 | D40 | **People in the fleet drill-down, lead's copy only** (owner decision; amends D33): a project opened from the fleet shows the per-person lead view (Multi-stack leaders, points by person) when the page carries that project's `out/private/leads.json`. `pmx fleet serve` includes them (only this machine can connect, like `pmx serve`); `pmx fleet export --with-private` writes `out/private/fleet.html` with them and nothing else. The default `fleet export` (`fleet.json`, `fleet.html`) stays shareable, with no people | 2026-10-12 |
+| D41 | **The tool is `pmx`** (owner decision, M7): the working name becomes the name; "working name" is dropped from the CLI, the crate and the docs | 2026-10-12 |
+| D42 | **Distribution** (owner decision, M7): GitHub Releases built by `cargo-dist` for macOS arm64/x64, Linux x64/arm64 and Windows x64, each with the dashboard and the WASM engine built in (CI fails rather than ship the placeholder page), shell and PowerShell installers, and a **Homebrew tap** (`kondfox/homebrew-tap`, `brew install kondfox/tap/pmx`). Releases also serve `cargo binstall`. **Not** on crates.io in v1: the build needs Node and every `pm-*` crate would have to be published | 2026-10-12 |
+| D43 | **`pmx init` is a guided setup** (owner decision, M7): in a terminal it lets you edit each suggested repo (keep, role, branch, drop), asks for the name and start date, checks the code-host token, offers a Velocity classifier (only what is found on the machine, default none, since diffs then leave it), writes `pmx.toml`, then offers the `[people]` merges, `tools install`, runs `check`, and offers `collect` and `serve --open`. Every step can be skipped. `--yes`, or stdin that is not a terminal, keeps today's behaviour (write the suggestions, nothing else); `--interactive` asks even without a terminal (for tests and scripts). The separate commands stay | 2026-10-12 |
 | D10 | The parity harness is a workspace crate (`pmx-parity`, not published) that reads the golden set from `PMX_GOLDEN_DIR` and prints to the terminal only. It runs twice: in the **prototype dialect** (the prototype's test rules and git reading) every M1 series must match exactly; in the spec dialect the intentional differences are reported | 2026-10-09 |
 
 ---
@@ -143,7 +148,7 @@ One project is one **workspace folder**. The repos it lists can live anywhere.
 
 | Command | What it does |
 |---|---|
-| `pmx init [dirs…]` | Scans for git clones. Suggests a branch per repo (from `origin/HEAD`) and a role from the repo's contents: `*.csproj` → backend, React/Vite → frontend, `android/`/`ios/` → mobile, Terraform → infra, Cypress/Playwright → qa, mixed → `per-file`. Reads the code-host type and project id from the remote URL. Lockfiles are auto-discovered. You confirm the suggestions; it writes `pmx.toml` |
+| `pmx init [dirs…]` | Guided in a terminal (D43). Scans for git clones. Suggests a branch per repo (from `origin/HEAD`) and a role from the repo's contents: `*.csproj` → backend, React/Vite → frontend, `android/`/`ios/` → mobile, Terraform → infra, Cypress/Playwright → qa, mixed → `per-file`. Reads the code-host type and project id from the remote URL. Lockfiles are auto-discovered. You confirm the suggestions; it writes `pmx.toml` |
 | `pmx repo add <path\|url> [--role] [--branch] [--name]` · `list` · `set <name> [--role] [--branch] [--rev] [--rename] [--code-host-id]` · `remove` | Edit the repo list. For a URL, pmx keeps a bare clone in `.pmx/repos/` and only reads from it, so working copies are never touched. `add` suggests role and branch like `init` |
 | `pmx people` · `--apply` · `merge "<Person>" <id>…` · `bot <id>…` · `external <id>…` | Lists every author identity across **all** repos since `range_start`, plus the code-host logins (authors and reviewers) of the PRs the last `collect` stored, and proposes merges: same normalized name, `first.last` email local part or login, a login's display name, GitHub noreply login. Flags automated-looking identities as bot candidates. `--apply` (or answering yes) writes `[people]`; `merge`/`bot`/`external` fix the rest. This step is what makes cross-repo per-person metrics (multi-stack, active devs, mentoring) correct |
 | `pmx check [--threshold 10]` | Every path exists (URL repos: reachable), every branch resolves, lockfile overrides exist, tokens are present, repos lack no `code_host_id` when `[code_host]` is set, the `local-only` data policy holds for the classifier and its fallbacks, the FTE file has the project, and no identity with ≥ threshold commits is missing from `[people]` (an unmapped login with ≥ threshold PRs and reviews is a warning). Exit code 1 on any error |
@@ -558,8 +563,8 @@ known bias. A human-labelled set remains the stronger check.
 
 ## 7. Distribution
 
-- Release binaries built by `cargo-dist` (macOS arm64/x64, Linux x64/arm64, Windows), a Homebrew tap,
-  and `cargo binstall pmx`.
+- Release binaries built by `cargo-dist` (macOS arm64/x64, Linux x64/arm64, Windows x64), a Homebrew tap,
+  and `cargo binstall pmx` (D42). No crates.io release in v1.
 - `pmx doctor` and `pmx tools install` for external tools (§2.2).
 - Onboarding target: a new developer goes from download to their first dashboard in under 15 minutes.
 - CI templates (weekly GitLab job, GitHub Action) are **deferred** together with remote fleet storage (D2).
@@ -578,7 +583,7 @@ known bias. A human-labelled set remains the stronger check.
 | **M4** ✓ 2026-10-11 | `pm-codehost`: GitHub + GitLab; peer review, cycle time, review wait, mentoring (unified expert rule, spec §8) | Spec §8 complete. **Done:** every PR series exact against the recorded GitLab responses and the GitHub export for all three projects in the prototype dialect; in the spec dialect the only deltas are the months with PRs by bots or externals, and mentoring pairs (the unified rule) ([parity.md](parity.md) §6); `tests/pulls.rs` covers the stage against a fake GitLab (incremental fetch, fallback to stored PRs, not measured); dashboard Peer review section; `pmx demo` has PRs |
 | **M5** | `pm-llm`: schema types, `jev`, `openai-compatible`, `anthropic` and `command` providers, data-policy guard, confidence gate, cache, `classifier eval`; Velocity on `six-axis@2` | At least one remote and one local classifier pass the eval |
 | **M6** ✓ 2026-10-11 | Local fleet: `fleet.toml`, aggregation, fleet dashboard | Fleet rebuilt from the three local project folders. **Done:** see "M6 progress" |
-| **M7** | Packaging, `init` wizard polish, docs | 15-minute onboarding verified by someone new |
+| **M7** | Packaging, `init` wizard polish, docs | 15-minute onboarding verified by someone new. **Built:** see "M7 progress" |
 
 **M5 progress (2026-10-11).** Built: the schema types, the `six-axis@2` question set and the scoring in
 code (§6.4); all five providers: `claude-code` (D28), `command`, `jev`, `anthropic` and
@@ -617,6 +622,17 @@ attributing / PR subsets): no differences; the WASM engine reproduced every week
 `fleet.json`, coverage included; the page shows each project's own numbers and links into its dashboard.
 Nothing from the run is in this repo.
 
+**M7 progress (2026-10-12).** Built: the name is `pmx` (D41). Release packaging with cargo-dist
+(`dist-workspace.toml`, the generated `.github/workflows/release.yml`, `.github/build-setup.yml` that
+builds the dashboard and the WASM engine into every target and fails instead of embedding the placeholder),
+shell and PowerShell installers and the Homebrew formula for `kondfox/homebrew-tap` (D42). A local
+`dist build` of the macOS arm64 archive gives a 15 MB binary that links only system libraries and
+exports the full dashboard. CI gains a Windows build. The guided `pmx init` (D43,
+`crates/pmx/src/wizard.rs`; `tests/cli.rs` `guided_init` drives it with scripted answers). User docs in
+`docs/`: getting started, Velocity, fleet, troubleshooting, releasing, and the onboarding-test protocol;
+a rewritten README. The tap repo `kondfox/homebrew-tap` and the `HOMEBREW_TAP_TOKEN` secret exist (2026-10-12).
+**Left:** the first tagged release (the Linux, Windows and Intel-mac builds have not run yet), then the exit criterion: the protocol in `docs/onboarding-test.md` with someone new.
+
 **Testing:**
 - **Synthetic fixture repos**, built by the tests themselves with scripted authors, dates and file trees
   (`crates/pmx/tests/fixture.rs`, `crates/pm-git/src/tests.rs`), for classification, rework, pooling,
@@ -639,6 +655,6 @@ Nothing from the run is in this repo.
   server with `OLLAMA_CONTEXT_LENGTH=16384` (pmx's prompts reach ~10k tokens and the OpenAI endpoint can't
   set the context size) and classify with `effort = "none"`: with reasoning on, one trivial answer took
   2,500 tokens and two minutes; off, a package takes ~7 s and the logprobs land on the answer.
-- The **tool name**.
+- ~~The **tool name**~~ — resolved 2026-10-12 (D41): `pmx`.
 - **Cross-file SAST** stays an open decision, separate from this plan.
 - ~~Bundled SAST rules licence~~ — resolved 2026-10-11 (D24): our own `pmx-sast@1` rules.

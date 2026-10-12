@@ -188,6 +188,13 @@ const RELEASES: &[Release] = &[
     },
 ];
 
+/// Whether `pmx tools install` provides this tool on this machine.
+pub fn installable(id: ToolId) -> bool {
+    RELEASES
+        .iter()
+        .any(|r| r.id == id && asset_for(r, std::env::consts::OS, std::env::consts::ARCH).is_some())
+}
+
 fn asset_for(r: &Release, os: &str, arch: &str) -> Option<Asset> {
     r.assets.iter().find(|a| a.os == os && a.arch == arch).copied()
 }

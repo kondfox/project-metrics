@@ -55,3 +55,27 @@ jobs:
       # Synthetic fixtures only. The parity harness (pmx-parity) needs the private golden set and
       # runs locally.
       - run: cargo test --workspace
+
+  # Windows is a release target (plan D42) but the suite's scripted repos and fake tools assume a
+  # Unix shell: build pmx with the dashboard and the engine, and run the pure crates' tests.
+  windows:
+    name: build (windows-latest)
+    runs-on: windows-latest
+    env:
+      PMX_REQUIRE_WEB: "1"
+      PMX_REQUIRE_WASM: "1"
+      PMX_REQUIRE_NODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/pmx/web/package-lock.json
+      - run: cargo build -p pmx
+      - run: cargo test -p pm-classify -p pm-config -p pm-metrics -p pm-progress
+      - run: target/debug/pmx.exe --version

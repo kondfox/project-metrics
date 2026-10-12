@@ -1,67 +1,78 @@
-# project-metrics
+# pmx — project metrics
 
-> **Status: early development.** Milestones M1–M4 are done: pmx sets up a multi-repo workspace, collects
-> the git-derived metrics (activity, rework, tests/docs-with-code, multi-stack, AI-assisted), the
-> snapshot metrics (duplication, complexity, dependency vulnerabilities, secrets, SAST) and the PR flow
-> from GitHub or GitLab (peer review, cycle time, review wait, mentoring) incrementally, reproduces the
-> private prototype, and shows a project dashboard. The local fleet view (M6) is done; Velocity (M5,
-> LLM-scored) is built and awaiting its exit check. The design lives in the [wiki](wiki/README.md).
+pmx measures how well a team develops software, mostly from **git history**, so the same numbers work on
+any stack. Point it at a project's repositories and it shows a dashboard in your browser. The dashboard
+covers Quality (rework, tests and docs shipped with code, duplication), Security (vulnerable
+dependencies, live secrets), multi-stack developers, AI-assisted work, peer review and, with an LLM,
+Velocity. Everything runs on your machine.
+
+> **Status: early development (0.x).** The metrics reproduce a private prototype on three pilot
+> projects. Expect changes between releases. Design and milestones: [wiki](wiki/README.md).
+
+## Install
+
+```sh
+brew install kondfox/tap/pmx
+# or
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/kondfox/project-metrics/releases/latest/download/pmx-installer.sh | sh
+```
+
+Windows, `cargo binstall` and archives: [getting started](docs/getting-started.md#1-install-1-minute).
+You need git ≥ 2.30.
 
 ## Try it
 
-Needs Rust (stable) with the `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`),
-Node ≥ 20.19 (the build compiles the dashboard) and git ≥ 2.30. Without the target or Node pmx still
-builds, but with a reduced or placeholder dashboard.
+```sh
+pmx demo /tmp/acme && pmx -C /tmp/acme serve --open        # a fictional project
+```
 
-Try it on a fictional project first: `pmx demo /tmp/acme && pmx -C /tmp/acme serve --open`, or on a
-fictional fleet of three: `pmx demo /tmp/acme-fleet --fleet && pmx -C /tmp/acme-fleet fleet serve --open`.
+## Your project
 
 ```sh
-cargo build --release && export PATH="$PWD/target/release:$PATH"
-
 mkdir -p ~/metrics/acme-shop && cd ~/metrics/acme-shop
-pmx init ~/src/acme          # finds the clones, suggests branch + role per repo, writes pmx.toml
-pmx repo set shop-legacy --role per-file   # fix a suggestion if needed
-pmx repo set shop-api --code-host-id acme/shop-api   # GitHub owner/repo or GitLab project id
-export GITHUB_TOKEN=…        # or the [code_host] token_env: read access to PRs, for peer review
-pmx people                   # who is who across repos (and, after a collect, code-host logins)
-pmx check                    # paths, branches, tokens, unmapped identities
-pmx doctor                   # which snapshot tools are installed
-pmx tools install            # pinned scc, osv-scanner, gitleaks (checksum-verified)
-                             # SAST uses pmx's own bundled rules (crates/pm-snapshot/rules)
-pmx plan                     # what collect would do, and how long it should take
-pmx collect                  # progress + ETA; Ctrl-C and re-run to resume
-pmx serve --open             # the dashboard at http://127.0.0.1:7878 (includes the private lead view)
-pmx export --format html     # out/dashboard.html: one self-contained file to share
-pmx export --format long --weekly
+pmx init ~/src/acme      # finds the clones and walks you through the setup, then collects
+pmx serve --open         # the dashboard at http://127.0.0.1:7878 (with the lead's per-person view)
 ```
 
-Several projects make a **fleet**: a `fleet.toml` lists their workspace folders
-([example](examples/fleet.toml)), and
+Later: `pmx collect` (only reads what is new; Ctrl-C and re-run to resume), then
+`pmx export --format html` to write one self-contained `out/dashboard.html` you can share. It has no
+per-person data.
 
-```sh
-cd ~/metrics
-pmx fleet serve --open       # every project's headlines side by side; click one for its dashboard
-                             # (local only, so the dashboards include each project's people)
-pmx fleet export             # out/fleet.json + out/fleet.html (one shareable page, no per-person data)
-pmx fleet export --with-private  # out/private/fleet.html: with people, for the lead only
-```
+| Command | What it does |
+|---|---|
+| `pmx init [dirs…]` | Guided setup: repos, roles, token, classifier, people, tools, check, collect |
+| `pmx repo add\|list\|set\|remove` | Edit the repo list |
+| `pmx people` | Group author identities into people; `merge`, `bot`, `external` |
+| `pmx check` · `pmx doctor` | Is the setup complete? Which tools are installed? |
+| `pmx tools install` | The pinned scc, osv-scanner and gitleaks (checksum-verified) |
+| `pmx plan` · `pmx collect` | What a collect would do (with an ETA) · do it |
+| `pmx serve` · `pmx export` | The dashboard, live or as a file (`--format html` or `long` CSV) |
+| `pmx classifier test\|eval` | Check a Velocity classifier, or qualify one against reference scores |
+| `pmx fleet serve\|export` | Several projects side by side ([fleet](docs/fleet.md)) |
+| `pmx import-config` | Convert a config from the Python prototype |
 
-`collect` writes `out/project.json` (team level; people are pseudonymous ids) and
-`out/private/leads.json` (per-person drill-downs, for the lead only). Re-runs only read new commits and
-ask the code host only for PRs updated since the last run.
-A config from the Python prototype converts with `pmx import-config config_acme.json`.
+**Docs:** [getting started](docs/getting-started.md) · [Velocity](docs/velocity.md) ·
+[fleet](docs/fleet.md) · [troubleshooting](docs/troubleshooting.md) ·
+[what the metrics mean](wiki/metrics-overview.md) · [example pmx.toml](examples/pmx.toml).
+
+## Privacy
+
+- `out/project.json` and the exported dashboard are **team level**. People appear only as pseudonymous
+  ids (`p1`, `p2`, …).
+- Per-person views live in `out/private/` and in `pmx serve`, which only your machine can reach.
+- Velocity sends diffs to the classifier you configure. `data_policy = "local-only"` on a repo
+  allows only classifiers on your machine ([details](docs/velocity.md)).
+- `pmx.toml` names tokens only by environment variable, so it is safe to commit.
 
 ## Design
 
-- A single **Rust** binary (`pmx`, working name) with the dashboard embedded.
-- One workspace folder per project, listing any number of repositories, which are pooled into one project.
-- Incremental, resumable collection with progress and an ETA.
-- A **configurable LLM classifier** that always uses one question/answer schema (modelled on
-  [Jev](https://docs.typesafe.ai/)'s). It works with Jev, OpenAI-compatible endpoints (including local
-  models for sensitive code), Anthropic, or any command, with a `local-only` data-policy guard.
+A single Rust binary with the dashboard (React, plus the metrics engine compiled to WASM) embedded. One
+workspace folder per project, pooling any number of repositories. Incremental, resumable collection.
+Classifiers all use one question/answer schema (modelled on [Jev](https://docs.typesafe.ai/)'s): Jev,
+OpenAI-compatible endpoints (including local models), Anthropic, Claude Code, or any command.
 
-Full plan and milestones: [wiki/tool-implementation-plan.md](wiki/tool-implementation-plan.md).
+Plan and milestones: [wiki/tool-implementation-plan.md](wiki/tool-implementation-plan.md). Building from
+source and contributing: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

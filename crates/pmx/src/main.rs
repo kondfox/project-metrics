@@ -17,6 +17,7 @@ use pmx::people::{Status, add_unique, gather, merge, propose};
 use pmx::setup::{
     CONFIG_HEADER, RepoLocation, dedupe_names, default_range_start, looks_like_url, new_config, scan, suggest,
 };
+use pmx::wizard::{self, Prompter};
 use pmx::{CollectOptions, collect, write_outputs};
 
 #[derive(Parser)]
@@ -31,7 +32,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Create pmx.toml from the git clones found in DIRS (default: the current folder).
+    /// Set up a workspace from the git clones found in DIRS (default: the current folder). In a
+    /// terminal it is guided: repos, token, classifier, people, tools, check, collect, serve.
     Init {
         dirs: Vec<PathBuf>,
         /// Project name (default: the workspace folder's name).
@@ -40,12 +42,15 @@ enum Command {
         /// First day measured, YYYY-MM-DD (default: the first of the month a year ago).
         #[arg(long)]
         since: Option<NaiveDate>,
-        /// Write without asking.
+        /// Write the suggestions without asking anything (and do nothing else).
         #[arg(long, short)]
         yes: bool,
         /// Overwrite an existing pmx.toml.
         #[arg(long)]
         force: bool,
+        /// Ask the setup questions even when stdin is not a terminal (answers line by line).
+        #[arg(long, conflicts_with = "yes")]
+        interactive: bool,
     },
     /// Add, list, change or remove repos.
     #[command(subcommand)]
@@ -378,6 +383,7 @@ fn cmd_init(
     dirs: Vec<PathBuf>,
     name: Option<String>,
     since: Option<NaiveDate>,
+    mut p: Prompter,
     yes: bool,
     force: bool,
 ) -> Result<()> {
@@ -403,31 +409,46 @@ fn cmd_init(
     }
     dedupe_names(&mut suggestions);
     let ws_abs = std::fs::canonicalize(ws).unwrap_or_else(|_| ws.to_path_buf());
-    let name = name.unwrap_or_else(|| {
+    let mut name = name.unwrap_or_else(|| {
         ws_abs
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "project".into())
     });
-    let config = new_config(
-        name,
-        since.unwrap_or_else(|| default_range_start(today())),
-        &suggestions,
-    )?;
+    let mut since = since.unwrap_or_else(|| default_range_start(today()));
 
     println!("{} repos found:", suggestions.len());
-    let rows: Vec<_> = suggestions
-        .iter()
-        .map(|s| {
-            (
-                s.repo.display_name(),
-                s.repo.role.to_string(),
-                s.repo.branch.clone().unwrap_or_default(),
-                format!("{}  ({})", s.repo.path.clone().unwrap_or_default(), s.why),
-            )
-        })
-        .collect();
-    print_repo_table(&rows);
+    print_suggestions(&suggestions, p.interactive());
+    if p.interactive() && !suggestions.is_empty() {
+        eprintln!(
+            "The role decides which stack a repo's work counts for (per-file: decided file by file, for mixed repos)."
+        );
+    }
+    if p.interactive() && !suggestions.is_empty() {
+        loop {
+            let a = p.text("Change a repo? Its number or name (Enter: all fine)", "");
+            if a.is_empty() {
+                break;
+            }
+            match wizard::pick_repo(&a, &suggestions) {
+                Some(i) => {
+                    if !wizard::edit_repo(&mut p, &mut suggestions[i]) {
+                        suggestions.remove(i);
+                    }
+                    dedupe_names(&mut suggestions);
+                    print_suggestions(&suggestions, true);
+                }
+                None => eprintln!("  no repo `{a}`"),
+            }
+        }
+        name = p.text("Project name", &name);
+        since = p.parsed(
+            "First day measured (YYYY-MM-DD)",
+            &since.to_string(),
+            wizard::parse_date,
+        );
+    }
+    let mut config = new_config(name, since, &suggestions)?;
     println!(
         "project: {} · since {} · breadth roles: {}",
         config.project.name,
@@ -444,11 +465,159 @@ fn cmd_init(
         Some(h) => println!("code host: {:?} {}", h.kind, h.base.clone().unwrap_or_default()),
         None => println!("code host: not detected (set [code_host] by hand for PR metrics)"),
     }
-    if !yes && !confirm("Write pmx.toml?", true) {
+    if p.interactive() {
+        init_token(&mut p, &mut config);
+        init_classifier(&mut p, &mut config);
+        config.validate()?;
+    }
+    if !yes && !p.confirm("Write pmx.toml?", true) {
         bail!("nothing written");
     }
     write_new_config(ws, &config, force)?;
-    println!("next: fix any role with `pmx repo set <name> --role …`, then `pmx people`, `pmx check`, `pmx collect`");
+    if !p.interactive() {
+        println!(
+            "next: fix any role with `pmx repo set <name> --role …`, then `pmx people`, `pmx check`, `pmx collect`"
+        );
+        return Ok(());
+    }
+    init_rest(ws, &mut p)
+}
+
+fn print_suggestions(suggestions: &[pmx::setup::Suggestion], numbered: bool) {
+    let rows: Vec<_> = suggestions
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let name = s.repo.display_name();
+            (
+                if numbered { format!("{}. {name}", i + 1) } else { name },
+                s.repo.role.to_string(),
+                s.repo.branch.clone().unwrap_or_default(),
+                format!("{}  ({})", s.repo.path.clone().unwrap_or_default(), s.why),
+            )
+        })
+        .collect();
+    print_repo_table(&rows);
+}
+
+/// The code host's token: present, or how to get one (plan D43).
+fn init_token(p: &mut Prompter, config: &mut Config) {
+    let Some(h) = config.code_host.as_mut() else {
+        return;
+    };
+    let default = h.token_env.clone().unwrap_or_default();
+    let env = p.text("Env var holding the code-host token", &default);
+    h.token_env = Some(env.clone());
+    if std::env::var_os(&env).is_some_and(|v| !v.is_empty()) {
+        eprintln!("  ✓ ${env} is set");
+        return;
+    }
+    let how = match h.kind {
+        pm_config::CodeHostKind::Github => {
+            "a fine-grained token with read access to the repos' pull requests (Settings → Developer settings)"
+        }
+        pm_config::CodeHostKind::Gitlab => "a personal or project access token with the read_api scope",
+    };
+    eprintln!(
+        "  ${env} is not set. For peer review, cycle time and mentoring, create {how}, then\n  \
+         `export {env}=…` before `pmx collect`. Without it those metrics are \"not measured\"."
+    );
+}
+
+/// A Velocity classifier, only from what this machine has (plan D43). Default: none.
+fn init_classifier(p: &mut Prompter, config: &mut Config) {
+    let ollama = wizard::ollama_url();
+    let offers = wizard::classifier_offers(wizard::find_on_path("claude"), &ollama, &wizard::ollama_models(&ollama));
+    eprintln!("Velocity scores each work package with an LLM. It is optional and can be set up later.");
+    if offers.is_empty() {
+        eprintln!("  no classifier found here (the Claude Code CLI, or Ollama running); Velocity stays off.");
+        return;
+    }
+    let mut options = vec!["none for now".to_string()];
+    options.extend(offers.iter().map(|o| o.label.clone()));
+    let i = p.choose("Classifier for Velocity", &options, 0);
+    if i == 0 {
+        return;
+    }
+    let o = &offers[i - 1];
+    let since = wizard::default_velocity_since(today(), config.project.range_start);
+    let since = p.parsed(
+        "Score work packages from (scoring is the slow step)",
+        &since.to_string(),
+        wizard::parse_date,
+    );
+    config.classifiers.insert(o.name.clone(), o.config.clone());
+    config.velocity = Some(pm_config::Velocity {
+        classifier: Some(o.name.clone()),
+        since: Some(since),
+        rubric: None,
+    });
+    if !o.remote {
+        eprintln!(
+            "  start Ollama with OLLAMA_CONTEXT_LENGTH=16384: pmx's prompts reach ~10k tokens, more than its default"
+        );
+    }
+}
+
+/// After pmx.toml is written: people, tools, check, collect, serve. Each step can be skipped.
+fn init_rest(ws_dir: &Path, p: &mut Prompter) -> Result<()> {
+    let ws = Workspace::load(ws_dir)?;
+    eprintln!("\nWho is who: identities across the repos, grouped by person.");
+    let (idents, warnings) = gather(&ws);
+    for w in &warnings {
+        eprintln!("warning: {w}");
+    }
+    let proposal = propose(&ws.config.people, &idents);
+    print_people(&proposal);
+    if proposal.changes() > 0 {
+        eprintln!(
+            "Fix a grouping later with `pmx people merge \"<Person>\" <email or login>…`; exclude contractors with\n\
+             `pmx people external <name>` (their work then counts nowhere)."
+        );
+    }
+    if proposal.changes() > 0 && p.confirm("Write these into [people]?", true) {
+        edit_config(ws_dir, |d| Ok(d.set_people(&proposal.people)?))?;
+    }
+
+    let tools = pmx::detect_tools();
+    let missing: Vec<_> = pm_snapshot::ToolId::ALL
+        .into_iter()
+        .filter(|id| pmx::tools_install::installable(*id) && tools.get(*id).is_none())
+        .collect();
+    if !missing.is_empty() {
+        let names = missing.iter().map(|id| id.name()).collect::<Vec<_>>().join(", ");
+        if p.confirm(
+            &format!("\nInstall {names} (complexity, dependency vulnerabilities, secrets; checksum-verified downloads from GitHub)?"),
+            true,
+        ) {
+            for line in pmx::tools_install::install(&pmx::tools_dir().join("bin"), false)? {
+                println!("✓ {line}");
+            }
+        }
+    }
+    eprintln!("duplication (jscpd) and SAST (semgrep) need tools you install yourself: `pmx doctor` says how.");
+
+    let ws = Workspace::load(ws_dir)?;
+    eprintln!("\npmx check:");
+    let findings = pmx::check::check(&ws, 10);
+    let errors = pmx::check::report(&findings, &mut std::io::stdout())?;
+    if errors {
+        eprintln!("fix the errors above, then `pmx collect` and `pmx serve --open`.");
+        return Ok(());
+    }
+    if !p.confirm(
+        "\nCollect now? (the first run reads the whole history; Ctrl-C and re-run resumes)",
+        true,
+    ) {
+        eprintln!("next: `pmx collect`, then `pmx serve --open`");
+        return Ok(());
+    }
+    cmd_collect(&ws, CollectOptions::new(today()), Mode::auto())?;
+    if p.confirm("Open the dashboard?", true) {
+        cmd_serve(ws_dir, 7878, true)?;
+    } else {
+        eprintln!("next: `pmx serve --open`");
+    }
     Ok(())
 }
 
@@ -561,6 +730,52 @@ fn cmd_repo(ws_dir: &Path, cmd: RepoCommand) -> Result<()> {
     Ok(())
 }
 
+fn print_people(p: &pmx::people::Proposal) {
+    let mut current = String::new();
+    for (i, s) in &p.rows {
+        let (head, mark) = match s {
+            Status::Mapped(person) => (person.clone(), " "),
+            Status::Proposed(person) => (person.clone(), "+"),
+            Status::Bot => ("bots (excluded)".into(), " "),
+            Status::External => ("externals (excluded)".into(), " "),
+        };
+        if head != current {
+            println!("{head}");
+            current = head;
+        }
+        println!(
+            "  {mark} {:<52} {:>6} {:<11}  last {}  {}",
+            i.label(),
+            fmt_n(i.commits),
+            i.unit(),
+            i.last,
+            i.repos.iter().cloned().collect::<Vec<_>>().join(", ")
+        );
+    }
+    if !p.bot_hints.is_empty() {
+        println!("\nlook automated (exclude with `pmx people bot <email or login>`):");
+        for i in &p.bot_hints {
+            println!("  {}", i.label());
+        }
+    }
+}
+
+fn cmd_serve(ws_dir: &Path, port: u16, open: bool) -> Result<()> {
+    let out = ws_dir.join("out");
+    pmx::dashboard::render_workspace(&out, true)?;
+    let listener = std::net::TcpListener::bind(("127.0.0.1", port))
+        .with_context(|| format!("cannot listen on 127.0.0.1:{port} (try --port)"))?;
+    let url = format!("http://{}/", listener.local_addr()?);
+    eprintln!("serving {} at {url} (Ctrl-C to stop)", out.display());
+    if !pmx::dashboard::has_engine() {
+        eprintln!("note: this pmx was built without the WASM engine; custom ranges are off");
+    }
+    if open {
+        pmx::dashboard::open_browser(&url);
+    }
+    pmx::dashboard::serve(listener, &out)
+}
+
 fn cmd_people(ws_dir: &Path, action: Option<PeopleCommand>, apply: bool) -> Result<()> {
     let ws = Workspace::load(ws_dir)?;
     let mut people = ws.config.people.clone();
@@ -589,33 +804,7 @@ fn cmd_people(ws_dir: &Path, action: Option<PeopleCommand>, apply: bool) -> Resu
     }
     idents.extend(logins);
     let p = propose(&people, &idents);
-    let mut current = String::new();
-    for (i, s) in &p.rows {
-        let (head, mark) = match s {
-            Status::Mapped(person) => (person.clone(), " "),
-            Status::Proposed(person) => (person.clone(), "+"),
-            Status::Bot => ("bots (excluded)".into(), " "),
-            Status::External => ("externals (excluded)".into(), " "),
-        };
-        if head != current {
-            println!("{head}");
-            current = head;
-        }
-        println!(
-            "  {mark} {:<52} {:>6} {:<11}  last {}  {}",
-            i.label(),
-            fmt_n(i.commits),
-            i.unit(),
-            i.last,
-            i.repos.iter().cloned().collect::<Vec<_>>().join(", ")
-        );
-    }
-    if !p.bot_hints.is_empty() {
-        println!("\nlook automated (exclude with `pmx people bot <email or login>`):");
-        for i in &p.bot_hints {
-            println!("  {}", i.label());
-        }
-    }
+    print_people(&p);
     let n = p.changes();
     if n == 0 {
         println!("\n[people] already covers every identity.");
@@ -791,7 +980,16 @@ fn run(cli: Cli) -> Result<()> {
             since,
             yes,
             force,
-        } => cmd_init(&ws_dir, dirs, name, since, yes, force)?,
+            interactive,
+        } => cmd_init(
+            &ws_dir,
+            dirs,
+            name,
+            since,
+            Prompter::stdin(yes, interactive),
+            yes,
+            force,
+        )?,
         Command::Repo(cmd) => cmd_repo(&ws_dir, cmd)?,
         Command::People { action, apply } => cmd_people(&ws_dir, action, apply)?,
         Command::Check { threshold } => {
@@ -988,21 +1186,7 @@ fn run(cli: Cli) -> Result<()> {
             }
             eprintln!("next: pmx -C {} serve --open", dir.display());
         }
-        Command::Serve { port, open } => {
-            let out = ws_dir.join("out");
-            pmx::dashboard::render_workspace(&out, true)?;
-            let listener = std::net::TcpListener::bind(("127.0.0.1", port))
-                .with_context(|| format!("cannot listen on 127.0.0.1:{port} (try --port)"))?;
-            let url = format!("http://{}/", listener.local_addr()?);
-            eprintln!("serving {} at {url} (Ctrl-C to stop)", out.display());
-            if !pmx::dashboard::has_engine() {
-                eprintln!("note: this pmx was built without the WASM engine; custom ranges are off");
-            }
-            if open {
-                pmx::dashboard::open_browser(&url);
-            }
-            pmx::dashboard::serve(listener, &out)?;
-        }
+        Command::Serve { port, open } => cmd_serve(&ws_dir, port, open)?,
         Command::Fleet(FleetCommand::Serve { manifest, port, open }) => {
             let manifest = ws_dir.join(manifest.manifest);
             let fleet = load_fleet(&manifest)?;

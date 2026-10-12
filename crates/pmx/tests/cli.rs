@@ -59,6 +59,82 @@ fn build(root: &Path) {
     docs.commit("2025-01-09", JANE, "handbook");
 }
 
+/// `pmx init --interactive` with scripted answers (plan D43): edit a repo, name, start date, pick
+/// the classifier found on PATH, write, take the people proposal; the end of the input skips the
+/// rest (tools, collect, serve).
+#[test]
+fn guided_init() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    build(root);
+    let ws = root.join("ws");
+    let fake_bin = root.join("bin");
+    std::fs::create_dir_all(&fake_bin).unwrap();
+    let claude = fake_bin.join("claude");
+    std::fs::write(&claude, "#!/bin/sh\nexit 1\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = std::env::join_paths(
+        std::iter::once(fake_bin.clone()).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+
+    let answers = [
+        "2",          // change shop-web
+        "",           // keep it
+        "",           // role: frontend
+        "",           // branch
+        "storefront", // name
+        "",           // done with repos
+        "Acme Shop",
+        "2025-01-01",
+        "2",          // classifier: Claude Code
+        "2025-02-01", // score from
+        "y",          // write pmx.toml
+        "y",          // write [people]
+    ];
+    let mut child = Command::new(env!("CARGO_BIN_EXE_pmx"))
+        .arg("-C")
+        .arg(&ws)
+        .args(["init", root.join("src").to_str().unwrap(), "--interactive"])
+        .env("PATH", path)
+        .env("OLLAMA_HOST", "127.0.0.1:9")
+        .env("PMX_TOOLS_DIR", root.join("tools"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all((answers.join("\n") + "\n").as_bytes()).unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.contains("1) none for now"), "{stderr}");
+    assert!(!stderr.contains("Ollama on this machine"), "{stderr}");
+
+    let cfg = pm_config::Workspace::load(&ws).unwrap().config;
+    assert_eq!(cfg.project.name, "Acme Shop");
+    assert_eq!(cfg.project.range_start.to_string(), "2025-01-01");
+    let names: Vec<_> = cfg.repos.iter().map(|r| r.display_name()).collect();
+    assert_eq!(names, ["shop-api", "storefront"]);
+    let c = &cfg.classifiers["claude"];
+    assert_eq!(c.provider, pm_config::Provider::ClaudeCode);
+    assert_eq!(c.model.as_deref(), Some("claude-sonnet-5-5"));
+    let v = cfg.velocity.as_ref().unwrap();
+    assert_eq!(v.classifier.as_deref(), Some("claude"));
+    assert_eq!(v.since.unwrap().to_string(), "2025-02-01");
+    assert!(cfg.people.persons.contains_key("Jane Doe"), "{:?}", cfg.people);
+    // Nothing collected: the input ended before that question.
+    assert!(!ws.join("out/project.json").exists());
+}
+
 #[test]
 fn setup_flow() {
     let tmp = tempfile::tempdir().unwrap();

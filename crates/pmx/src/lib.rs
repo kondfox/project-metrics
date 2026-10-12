@@ -15,6 +15,7 @@ pub mod setup;
 pub mod snapshots;
 pub mod tools_install;
 pub mod velocity;
+pub mod wizard;
 
 /// Where `pmx tools install` puts external tools (searched before PATH). `PMX_TOOLS_DIR` overrides.
 pub fn tools_dir() -> std::path::PathBuf {
