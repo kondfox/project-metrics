@@ -426,14 +426,11 @@ fn group(commits: Vec<RepoCommit>, repos: &[VelocityRepo], prs: &PrIndex) -> Vec
     out
 }
 
-/// Excluded from the diff on top of generated files (spec §4.2).
+/// Excluded from the diff on top of generated files (spec §4.2). Migrations stay in (D39): they are
+/// often hand-written and are the evidence for R2.
 pub fn excluded_from_diff(classifier: &Classifier, path: &str) -> bool {
     let p = format!("/{path}");
-    classifier.is_generated(path)
-        || p.contains("/migrations/")
-        || p.contains("/Pods/")
-        || p.contains("/__generated__/")
-        || path.ends_with(".min.js")
+    classifier.is_generated(path) || p.contains("/Pods/") || p.contains("/__generated__/") || path.ends_with(".min.js")
 }
 
 /// Split a patch into `(path, section)` per file.
@@ -1389,7 +1386,7 @@ mod tests {
         assert_eq!(module_of("api", "src/x.ts"), "api:src");
         assert_eq!(module_of("api", "README.md"), "api:");
         let c = Classifier::default();
-        assert!(excluded_from_diff(&c, "db/migrations/0001_init.sql"));
+        assert!(!excluded_from_diff(&c, "db/migrations/0001_init.sql"));
         assert!(excluded_from_diff(&c, "ios/Pods/x.m"));
         assert!(excluded_from_diff(&c, "web/vendor.min.js"));
         assert!(excluded_from_diff(&c, "package-lock.json"));

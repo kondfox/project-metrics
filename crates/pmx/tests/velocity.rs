@@ -200,7 +200,7 @@ classifier = "fake"
     assert_eq!(monthly(p, "velocity", "2025-01"), None);
     assert_eq!(monthly(p, "velocity", "2025-03"), Some(0.0));
 
-    // What was sent: no names, no migration, the diff of the rule.
+    // What was sent: no names, the diff of the rule and of its migration (D39).
     let sent: Vec<Value> = std::fs::read_dir(&bin)
         .unwrap()
         .map(|e| e.unwrap().path())
@@ -213,14 +213,14 @@ classifier = "fake"
         .unwrap();
     let state: Value = serde_json::from_str(shop2["state"].as_str().unwrap()).unwrap();
     assert_eq!(state["ticket"], "SHOP-2");
-    assert_eq!(state["generated_files_excluded"], 1);
-    assert_eq!(state["files"].as_array().unwrap().len(), 1);
+    assert_eq!(state["generated_files_excluded"], 0);
+    assert_eq!(state["files"].as_array().unwrap().len(), 2);
     let diff = state["diff"].as_str().unwrap();
     assert!(diff.contains("+export pub const R0 = 0;"));
-    assert!(!diff.contains("CREATE TABLE"));
+    assert!(diff.contains("CREATE TABLE"));
     // `@3`: the anchors, then one layer choice per asked file.
     let q = shop2["questions"].as_object().unwrap();
-    assert_eq!(q.len(), 16);
+    assert_eq!(q.len(), 17);
     assert_eq!(q["r2_1"]["type"], "noul");
     assert_eq!(q["file_1"]["type"], "choice");
     assert!(
@@ -230,6 +230,12 @@ classifier = "fake"
             .contains("`api/src/orders/rule.ts`")
     );
     assert!(q["file_1"]["criteria"]["persistence"].is_string());
+    assert!(
+        q["file_2"]["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("`api/db/migrations/001_orders.sql`")
+    );
     assert!(shop2["context"].as_str().unwrap().contains("work package"));
     for s in &sent {
         let text = s["state"].as_str().unwrap();

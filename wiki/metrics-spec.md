@@ -251,8 +251,8 @@ only month-ends; `since` limits how far back trees are scanned.
    `(#<n>)` subjects), with a warning, and `velocity.health` records the repo, so the coarser grouping
    is visible. Package date = its last commit date; it is counted in that week and that month. (⟂ change
    vs prototype: modal commit month; PR packages.)
-2. **Diff extraction.** Each package's diff, excluding generated paths (§1.4 + `migrations/`, `Pods/`,
-   `__generated__/`, `*.min.js`), capped at **24,000 bytes** (flag `truncated`).
+2. **Diff extraction.** Each package's diff, excluding generated paths (§1.4 + `Pods/`, `__generated__/`,
+   `*.min.js`; migrations stay in, D39), capped at **24,000 bytes** (flag `truncated`).
 3. **LLM scoring** against the six-axis rubric → R1–R6 (0–3 each); sum → points
    `0–2 XS 1 · 3–5 S 2 · 6–8 M 3 · 9–11 L 5 · 12–14 XL 8 · 15–18 XXL 13`. Contract: §8.3.
 4. **Velocity = Σ points ÷ (FTE × business days in window)** — points per FTE-day. Business days = Mon–Fri

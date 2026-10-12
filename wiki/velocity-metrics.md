@@ -35,7 +35,7 @@ date = its last commit's author date. Bots and externals are in no package (spec
 | `prod` | Source code | Yes | Yes |
 | `other` | Config, html, json, … (not generated, not doc, not a source extension) | Yes | Yes |
 
-Also never in the diff: `migrations/` (generated), `Pods/`, `__generated__/`, `*.min.js`. Stack roles:
+Also never in the diff: `Pods/`, `__generated__/`, `*.min.js`. Migrations stay in (D39). Stack roles:
 `frontend`, `backend`, `mobile`, `qa`, `infra`, `data`, `docs` (the repo's `role`, or per file for
 `per-file` repos).
 
