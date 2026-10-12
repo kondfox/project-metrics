@@ -10,21 +10,16 @@ import { metricDef } from "../metrics/registry";
 import tableStyles from "../components/tables/tables.module.css";
 import { useFleet } from "./context";
 import { HEADLINES, projectMeasures, type Headline } from "./headlines";
-import { useFleetLowN, useFleetRange, useFleetTrend } from "./hooks";
+import { useFleetRange, useFleetTrend } from "./hooks";
 import styles from "./fleet.module.css";
 
 type CellState =
-  | { kind: "value"; v: number; n: number | null; approx: boolean }
+  | { kind: "value"; v: number; approx: boolean }
   | { kind: "empty" }
   | { kind: "notMeasured"; why?: string }
   | { kind: "needsEngine" };
 
-function cellOf(
-  h: Headline,
-  m: Pick<Metrics, "values" | "n"> | null,
-  measured: boolean,
-  why?: string,
-): CellState {
+function cellOf(h: Headline, m: Pick<Metrics, "values"> | null, measured: boolean, why?: string): CellState {
   if (!measured) return { kind: "notMeasured", why };
   if (!m) return { kind: "needsEngine" };
   const v = m.values[h.id] ?? null;
@@ -32,7 +27,6 @@ function cellOf(
   return {
     kind: "value",
     v,
-    n: m.n[h.id] ?? null,
     approx: h.id === "velocity" && m.values.velocity_approx === 1,
   };
 }
@@ -51,8 +45,6 @@ function Cell({
   /** The value in the period just before. */
   was: number | null;
 }) {
-  const isLowN = useFleetLowN();
-  const threshold = useFleet().fleet.low_n_threshold;
   switch (c.kind) {
     case "notMeasured":
       return (
@@ -70,9 +62,6 @@ function Cell({
           {(h.snapshot || c.approx) && "~"}
           {formatMetric(metricDef(h.id), c.v)}
           {h.score && <BandBadge score={c.v} />}
-          {isLowN(c.n) && (
-            <Badge title={`fewer than ${threshold} events: read with care`}>low n · {c.n}</Badge>
-          )}
           {extra}
           <Change h={h} now={c.v} was={was} />
           <Sparkline values={trend} label={`${h.label} trend`} />
