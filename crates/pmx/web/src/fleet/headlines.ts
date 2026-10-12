@@ -14,6 +14,8 @@ export interface Headline {
   snapshot?: boolean;
   /** Context, not a headline (fleet-vision.md). */
   context?: boolean;
+  /** A rise is good news (its change arrow is green, a fall red); otherwise the arrow stays neutral. */
+  higherIsBetter?: boolean;
   /** What the fleet row does with it, for the column's tooltip. */
   pooling: string;
 }
@@ -22,6 +24,7 @@ export interface Headline {
 export const HEADLINES: readonly Headline[] = [
   {
     id: "quality",
+    higherIsBetter: true,
     label: "Quality",
     input: "quality",
     score: true,
@@ -35,13 +38,19 @@ export const HEADLINES: readonly Headline[] = [
   },
   {
     id: "security_score",
+    higherIsBetter: true,
     label: "Security",
     input: "security",
     score: true,
     snapshot: true,
     pooling: "the worst project (a gate, not an average)",
   },
-  { id: "multi_stack_pct", label: "Multi-stack devs", pooling: "pooled; people are counted per project" },
+  {
+    id: "multi_stack_pct",
+    higherIsBetter: true,
+    label: "Multi-stack devs",
+    pooling: "pooled; people are counted per project",
+  },
   {
     id: "ai_assist_commit_pct",
     label: "AI-assisted",
@@ -50,6 +59,7 @@ export const HEADLINES: readonly Headline[] = [
   },
   {
     id: "review_coverage_pct",
+    higherIsBetter: true,
     label: "Peer review",
     input: "peer_review",
     pooling: "pooled over projects with code-host data",

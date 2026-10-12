@@ -29,3 +29,19 @@
     grid-template-columns: 1fr;
   }
 }
+
+.sparkline {
+  display: block;
+  margin: 4px 0 0 auto;
+  overflow: visible;
+}
+.sparkline polyline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.sparkline circle {
+  fill: var(--accent);
+}

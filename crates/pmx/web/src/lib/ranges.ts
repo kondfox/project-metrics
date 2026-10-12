@@ -1,4 +1,4 @@
-import { addDays, monthRange, type DateRange } from "./dates";
+import { addDays, DAY_MS, monthRange, type DateRange } from "./dates";
 
 export type PresetId = "month" | "week" | "3m" | "6m" | "12m" | "all" | "custom";
 
@@ -55,4 +55,26 @@ export function presetRange(id: PresetId, ctx: RangeContext): DateRange | null {
 export function chartWindow(range: DateRange, ctx: RangeContext): DateRange {
   const yearBack = addDays(range.end, -365);
   return { start: clampStart(range.start < yearBack ? range.start : yearBack, ctx), end: range.end };
+}
+
+/**
+ * The period just before a range, to show what changed: as many whole months when the range is whole
+ * months, else as many days. Null when it would start before the first day measured.
+ */
+export function previousRange(range: DateRange, ctx: RangeContext): DateRange | null {
+  const { start, end } = range;
+  const wholeMonths = start.getUTCDate() === 1 && addDays(end, 1).getUTCDate() === 1;
+  let prev: DateRange;
+  if (wholeMonths) {
+    const months =
+      (end.getUTCFullYear() - start.getUTCFullYear()) * 12 + end.getUTCMonth() - start.getUTCMonth() + 1;
+    prev = {
+      start: new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() - months, 1)),
+      end: addDays(start, -1),
+    };
+  } else {
+    const days = Math.round((end.getTime() - start.getTime()) / DAY_MS) + 1;
+    prev = { start: addDays(start, -days), end: addDays(start, -1) };
+  }
+  return prev.start < ctx.start ? null : prev;
 }

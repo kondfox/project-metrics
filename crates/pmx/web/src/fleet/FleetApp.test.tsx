@@ -35,6 +35,22 @@ describe("<FleetRoot>", () => {
     expect(screen.getByText(/Collected before 2026-09-30/)).toHaveTextContent("Acme CRM");
   });
 
+  it("draws a trend line under each value", () => {
+    window.history.replaceState(null, "", "#monthly&2026-09-01..2026-09-30");
+    renderFleet();
+    expect(within(row("Acme CRM")).getByRole("img", { name: "Quality trend" })).toBeInTheDocument();
+    expect(within(row("Fleet")).getByRole("img", { name: "Security trend" })).toBeInTheDocument();
+  });
+
+  it("shows how much each value moved since the period before", () => {
+    window.history.replaceState(null, "", "#monthly&2026-09-01..2026-09-30");
+    renderFleet();
+    const fleet = row("Fleet");
+    expect(within(fleet).getByTitle("up from 60 in the period before")).toHaveTextContent("▲3");
+    expect(within(fleet).getByTitle("down from 52 in the period before")).toHaveTextContent("▼12");
+    expect(within(row("Acme CRM")).getByTitle("up from 10.0% in the period before")).toHaveTextContent("▲10");
+  });
+
   it("opens a project's dashboard and comes back", async () => {
     renderFleet();
     await userEvent.click(screen.getByRole("link", { name: "Acme CRM" }));

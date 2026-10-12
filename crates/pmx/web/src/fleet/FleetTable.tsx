@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Sparkline } from "../components/charts/Sparkline";
 import { formatMetric } from "../components/tiles/formatMetric";
 import { Badge } from "../components/ui/Badge";
 import { BandBadge } from "../components/ui/BandBadge";
@@ -9,7 +10,7 @@ import { metricDef } from "../metrics/registry";
 import tableStyles from "../components/tables/tables.module.css";
 import { useFleet } from "./context";
 import { HEADLINES, projectMeasures, type Headline } from "./headlines";
-import { useFleetLowN, useFleetRange } from "./hooks";
+import { useFleetLowN, useFleetRange, useFleetTrend } from "./hooks";
 import styles from "./fleet.module.css";
 
 type CellState =
@@ -36,7 +37,20 @@ function cellOf(
   };
 }
 
-function Cell({ h, c, extra }: { h: Headline; c: CellState; extra?: ReactNode }) {
+function Cell({
+  h,
+  c,
+  extra,
+  trend,
+  was,
+}: {
+  h: Headline;
+  c: CellState;
+  extra?: ReactNode;
+  trend: Array<number | null>;
+  /** The value in the period just before. */
+  was: number | null;
+}) {
   const isLowN = useFleetLowN();
   const threshold = useFleet().fleet.low_n_threshold;
   switch (c.kind) {
@@ -60,9 +74,32 @@ function Cell({ h, c, extra }: { h: Headline; c: CellState; extra?: ReactNode })
             <Badge title={`fewer than ${threshold} events: read with care`}>low n · {c.n}</Badge>
           )}
           {extra}
+          <Change h={h} now={c.v} was={was} />
+          <Sparkline values={trend} label={`${h.label} trend`} />
         </>
       );
   }
+}
+
+/** ▲/▼ and how much the value moved since the period just before; green or red when the direction matters. */
+function Change({ h, now, was }: { h: Headline; now: number; was: number | null }) {
+  if (was == null) return null;
+  const def = metricDef(h.id);
+  // Percentages move in points, shown whole.
+  const decimals = def.unit === "percent" ? 0 : (def.decimals ?? 0);
+  const d = now - was;
+  if (Number(Math.abs(d).toFixed(decimals)) === 0) return null;
+  const up = d > 0;
+  const tone = h.higherIsBetter ? (up ? styles.good : styles.bad) : styles.muted;
+  return (
+    <span
+      className={`${styles.change} ${tone}`}
+      title={`${up ? "up" : "down"} from ${formatMetric(def, was)} in the period before`}
+    >
+      {up ? "▲" : "▼"}
+      {Math.abs(d).toFixed(decimals)}
+    </span>
+  );
 }
 
 function ProjectName({ p }: { p: FleetProject }) {
@@ -108,7 +145,8 @@ function fleetCell(h: Headline, pooled: Pooled | null): CellState {
 /** One row per project, then the fleet row; every project links to its own dashboard. */
 export function FleetTable() {
   const { fleet, projects } = useFleet();
-  const { pooled, rows } = useFleetRange();
+  const { pooled, rows, previous } = useFleetRange();
+  const trend = useFleetTrend();
   const total = fleet.projects.length;
   return (
     <div className={tableStyles.wrap}>
@@ -140,7 +178,12 @@ export function FleetTable() {
                       h.id === "velocity" && p.velocity_basis ? `scored by ${p.velocity_basis}` : undefined
                     }
                   >
-                    <Cell h={h} c={cellOf(h, rows[p.key] ?? null, projectMeasures(project, h.input))} />
+                    <Cell
+                      h={h}
+                      c={cellOf(h, rows[p.key] ?? null, projectMeasures(project, h.input))}
+                      trend={trend(p.key, h.id)}
+                      was={previous?.rows[p.key]?.values[h.id] ?? null}
+                    />
                   </td>
                 ))}
               </tr>
@@ -153,6 +196,8 @@ export function FleetTable() {
                 <Cell
                   h={h}
                   c={fleetCell(h, pooled)}
+                  trend={trend(null, h.id)}
+                  was={previous?.pooled?.values[h.id] ?? null}
                   extra={pooled && <Coverage pooled={pooled} h={h} total={total} />}
                 />
               </td>

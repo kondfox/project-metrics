@@ -28,3 +28,14 @@
   color: var(--muted);
   font-size: 12px;
 }
+.change {
+  font-size: 12px;
+  font-weight: 600;
+  margin-left: 6px;
+}
+.good {
+  color: var(--good);
+}
+.bad {
+  color: var(--bad);
+}

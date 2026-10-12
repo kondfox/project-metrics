@@ -1,5 +1,5 @@
 import { formatDate, parseDate } from "./dates";
-import { chartWindow, presetRange, type RangeContext } from "./ranges";
+import { chartWindow, presetRange, previousRange, type RangeContext } from "./ranges";
 
 const ctx: RangeContext = {
   start: parseDate("2025-09-01"),
@@ -27,5 +27,15 @@ describe("ranges", () => {
   it("charts at least a year back", () => {
     const r = { start: parseDate("2026-09-01"), end: parseDate("2026-09-30") };
     expect(fmt(chartWindow(r, ctx))).toEqual(["2025-09-30", "2026-09-30"]);
+  });
+
+  it("compares with the period just before", () => {
+    const prev = (s: string, e: string) =>
+      fmt(previousRange({ start: parseDate(s), end: parseDate(e) }, ctx));
+    expect(prev("2026-09-01", "2026-09-30")).toEqual(["2026-08-01", "2026-08-31"]);
+    expect(prev("2026-07-01", "2026-09-30")).toEqual(["2026-04-01", "2026-06-30"]);
+    expect(prev("2026-03-01", "2026-03-31")).toEqual(["2026-02-01", "2026-02-28"]);
+    expect(prev("2026-09-28", "2026-10-04")).toEqual(["2026-09-21", "2026-09-27"]);
+    expect(prev("2025-09-01", "2026-10-09")).toBeNull();
   });
 });

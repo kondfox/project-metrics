@@ -3,24 +3,10 @@ import { ChartCard, ChartGrid } from "../components/charts/TimeSeriesChart";
 import { useChartTheme } from "../components/charts/chartTheme";
 import { EChart } from "../components/charts/EChart";
 import { buildTimeSeriesOption, type SeriesSpec } from "../components/charts/timeSeriesOption";
-import { fleetBuckets } from "../data/fleet";
 import { buckets as projectBuckets } from "../data/project";
-import { chartWindow } from "../lib/ranges";
 import { useFleet } from "./context";
 import { HEADLINES, projectMeasures, type Headline } from "./headlines";
-import { useFleetLowN } from "./hooks";
-
-/** The fleet's weeks or months in the chart window, and which fall in the selected range. */
-function useFleetChartBuckets() {
-  const { fleet, cadence, range, rangeContext } = useFleet();
-  return useMemo(() => {
-    const b = fleetBuckets(fleet, cadence);
-    const window = chartWindow(range, rangeContext);
-    const indices = b.ranges.flatMap((r, i) => (r.end >= window.start && r.start <= window.end ? [i] : []));
-    const inRange = indices.map((i) => b.ranges[i]!.end >= range.start && b.ranges[i]!.start <= range.end);
-    return { buckets: b, indices, inRange };
-  }, [fleet, cadence, range, rangeContext]);
-}
+import { alignTo, useFleetChartBuckets, useFleetLowN } from "./hooks";
 
 /** One headline over time: a line per project, the fleet row emphasized. */
 function HeadlineTrend({ h }: { h: Headline }) {
@@ -42,14 +28,8 @@ function HeadlineTrend({ h }: { h: Headline }) {
     fleet.projects.forEach((fp, k) => {
       const p = projects[fp.key]!;
       if (!projectMeasures(p, h.input)) return;
-      // Projects cover different spans: line their buckets up by label.
       const pb = projectBuckets(p, cadence);
-      const at = new Map(pb.labels.map((l, i) => [l, i]));
-      const pick = (xs: Array<number | null> | undefined) =>
-        labels.map((l) => {
-          const i = at.get(l);
-          return i == null ? null : (xs?.[i] ?? null);
-        });
+      const pick = alignTo(labels, pb);
       series.push({ label: fp.name, color: k % 6, values: pick(pb.series[h.id]), n: pick(pb.n[h.id]) });
     });
     return buildTimeSeriesOption({
