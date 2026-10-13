@@ -14,7 +14,7 @@ import { ReviewSection } from "./sections/ReviewSection";
 import { VelocitySection } from "./sections/VelocitySection";
 import { useRangeMetrics } from "./state/hooks";
 
-/** The project dashboard. A new area of metrics is a new section here. */
+/** The project dashboard, in the fleet's column order (fleet/headlines.ts). A new area of metrics is a new section here. */
 export function App() {
   const hasRange = useRangeMetrics() != null;
   return (
@@ -25,14 +25,14 @@ export function App() {
       {hasRange ? (
         <>
           <HeadlineSection />
-          <QualitySection />
           <VelocitySection />
+          <QualitySection />
           <SecuritySection />
-          <CodeHealthSection />
-          <ReviewSection />
-          <ActivitySection />
           <MultiStackSection />
           <AiSection />
+          <ReviewSection />
+          <ActivitySection />
+          <CodeHealthSection />
         </>
       ) : (
         <Banner tone="warn">

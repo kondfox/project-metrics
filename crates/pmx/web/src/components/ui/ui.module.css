@@ -58,6 +58,7 @@
 
 .section {
   margin: 24px 0 8px;
+  scroll-margin-top: 8px;
 }
 .section > h2 {
   font-size: 13px;

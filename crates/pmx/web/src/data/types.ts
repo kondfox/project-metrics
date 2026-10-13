@@ -11,6 +11,7 @@ export type { SnapshotPoint } from "../generated/SnapshotPoint";
 export type { VulnPackage } from "../generated/VulnPackage";
 export type { Package } from "../generated/Package";
 export type { VelocityDetail } from "../generated/VelocityDetail";
+export type { VelocityOptions } from "../generated/VelocityOptions";
 export type { Leader } from "../generated/Leader";
 export type { LeadsFile } from "../generated/LeadsFile";
 export type { Meta } from "../generated/Meta";

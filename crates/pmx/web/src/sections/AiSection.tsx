@@ -7,13 +7,13 @@ export function AiSection() {
   const { project } = useDashboard();
   if (!project.project.ai_attribution) {
     return (
-      <Section title="AI-assisted">
+      <Section title="AI-assisted" id="ai">
         <p>Not tracked for this project: AI trailers are stripped by policy (spec §6).</p>
       </Section>
     );
   }
   return (
-    <Section title="AI-assisted vs human (trailing 12 months)">
+    <Section title="AI-assisted vs human (trailing 12 months)" id="ai">
       {project.ai_compare ? <AiCompareTable compare={project.ai_compare} /> : <p>No commits to compare.</p>}
       <ChartGrid>
         <TimeSeriesChart

@@ -7,7 +7,7 @@ import { formatNumber } from "../lib/format";
 
 export function QualitySection() {
   return (
-    <Section title="Quality">
+    <Section title="Quality" id="quality">
       <TileGrid>
         <MetricTile
           id="rework_pct"

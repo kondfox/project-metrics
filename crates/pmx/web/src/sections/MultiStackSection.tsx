@@ -8,7 +8,7 @@ import { useRangeMetrics } from "../state/hooks";
 export function MultiStackSection() {
   const leaders = useRangeMetrics()?.leaders;
   return (
-    <Section title="Multi-stack">
+    <Section title="Multi-stack" id="multi-stack">
       <TileGrid>
         <MetricTile id="multi_stack_pct" />
         <MetricTile id="breadth_index" />

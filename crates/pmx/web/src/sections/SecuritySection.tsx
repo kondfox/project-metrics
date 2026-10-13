@@ -12,7 +12,7 @@ export function SecuritySection() {
   const { project } = useDashboard();
   const measured = useMeasured();
   return (
-    <Section title="Security">
+    <Section title="Security" id="security">
       <TileGrid>
         <SecurityTile />
         <MeasuredTile

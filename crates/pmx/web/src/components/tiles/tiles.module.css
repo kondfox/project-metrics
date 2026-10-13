@@ -40,3 +40,24 @@
 .lowN .value {
   opacity: 0.55;
 }
+
+/* A headline tile that opens its section: the label's button covers the whole tile. */
+.linked {
+  position: relative;
+}
+.linked:hover {
+  border-color: var(--accent);
+}
+.jump {
+  all: unset;
+  cursor: pointer;
+}
+.jump::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius);
+}
+.jump:focus-visible::after {
+  outline: 2px solid var(--accent);
+}

@@ -14,7 +14,7 @@ export function ReviewSection() {
   const measured = useMeasured();
   if (!pulls || !measured("peer_review")) {
     return (
-      <Section title="Peer review">
+      <Section title="Peer review" id="peer-review">
         <TileGrid>
           <NotMeasuredTile id="peer_review" />
         </TileGrid>
@@ -24,7 +24,7 @@ export function ReviewSection() {
   const host = HOSTS[pulls.host] ?? pulls.host;
   const repos = pulls.repos.length === 1 ? pulls.repos[0] : `${pulls.repos.length} repos`;
   return (
-    <Section title="Peer review">
+    <Section title="Peer review" id="peer-review">
       <p>
         Merged {pulls.host === "gitlab" ? "merge requests" : "pull requests"} from {host} ({repos}), by merge
         date.

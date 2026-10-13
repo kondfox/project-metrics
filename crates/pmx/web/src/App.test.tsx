@@ -35,6 +35,18 @@ describe("<App>", () => {
     expect(window.location.hash).toBe("#weekly&2026-09-01..2026-09-30");
   });
 
+  it("opens a headline's section from its tile", async () => {
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    renderApp();
+    const headline = screen.getByRole("region", { name: "Headline" });
+    await userEvent.click(within(headline).getByRole("button", { name: "Peer review" }));
+    expect(scrolled).toEqual([screen.getByRole("region", { name: "Peer review" })]);
+    expect(window.location.hash).toBe("#weekly&2026-09-01..2026-09-30");
+  });
+
   it("shows people only in the lead's private view", () => {
     const { unmount } = renderApp();
     expect(screen.queryByRole("table", { name: "Multi-stack leaders" })).not.toBeInTheDocument();
@@ -96,6 +108,9 @@ describe("<App>", () => {
     expect(headline).toHaveTextContent("points per FTE-day · 2 work packages");
     expect(tile).toHaveTextContent("low n · 2");
     expect(screen.getByRole("group", { name: "Points delivered" })).toHaveTextContent("9");
+    expect(screen.getByRole("group", { name: "FTE" })).toHaveTextContent(
+      "2.044.0 FTE-days over 22 business days",
+    );
     const table = screen.getByRole("table", { name: "Work packages" });
     // September only, newest first.
     expect(table).toHaveTextContent("SHOP-42 Order totals");
