@@ -97,3 +97,8 @@
 :global(html.printing) .cards {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
+
+.idle {
+  font-size: 13px;
+  margin: 6px 0 0;
+}

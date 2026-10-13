@@ -36,6 +36,11 @@ tests_pts: number | null,
  */
 crosses_phase: boolean, 
 /**
+ * No work in the before-window (median 0 lines added a week): nothing to compare against, so
+ * there are no ratios and no guardrails.
+ */
+before_idle: boolean, 
+/**
  * Other markers between the start of the before-window and the end of the now-window, e.g.
  * a holiday lull or another AI step: they muddy the comparison.
  */

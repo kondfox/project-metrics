@@ -161,6 +161,9 @@ pub enum Outcome {
         tests_pts: Option<f64>,
         /// The two windows lie in different phases.
         crosses_phase: bool,
+        /// No work in the before-window (median 0 lines added a week): nothing to compare against, so
+        /// there are no ratios and no guardrails.
+        before_idle: bool,
         /// Other markers between the start of the before-window and the end of the now-window, e.g.
         /// a holiday lull or another AI step: they muddy the comparison.
         spans_markers: Vec<String>,
@@ -326,8 +329,16 @@ fn compare(
     };
     let (wb, wn) = (window(before), window(now));
     let (b, n) = (weekly(days, opts, before), weekly(days, opts, now));
-    let diff = |id| Some(pooled(days, opts, &wn, id)? - pooled(days, opts, &wb, id)?);
+    // An idle before-window has no baseline; its few commits would make the guardrails noise.
+    let before_idle = median(&b.volume).is_none_or(|m| m <= 0.0);
+    let diff = |id| {
+        if before_idle {
+            return None;
+        }
+        Some(pooled(days, opts, &wn, id)? - pooled(days, opts, &wb, id)?)
+    };
     Outcome::Ok {
+        before_idle,
         velocity: ratio(&b.velocity, &n.velocity),
         volume: ratio(&b.volume, &n.volume),
         approx: b.approx || n.approx,
@@ -654,6 +665,49 @@ mod tests {
         assert_eq!(spanned(&s.markers[1]), ["holidays", "main repos"]);
         // "main repos" compares 17 Feb – 13 Apr with the last 8 weeks: both other markers lie between.
         assert_eq!(spanned(&s.markers[0]), ["first repo", "holidays"]);
+    }
+
+    #[test]
+    fn an_idle_before_window_has_no_ratios_or_guardrails() {
+        let mut days = Days::new();
+        // Two stray commits in eight quiet weeks, then steady work after the marker.
+        work(&mut days, "2025-01-15", "2025-01-15", 50, 1);
+        work(&mut days, "2025-03-05", "2025-03-05", 2000, 5);
+        work(&mut days, "2025-03-17", "2025-06-22", 300, 4);
+        let t = Timeline {
+            markers: vec![Marker {
+                name: "AI".into(),
+                date: d("2025-03-12"),
+                kind: Some("ai".into()),
+            }],
+            ..Default::default()
+        };
+        let s = speed_ups(&days, &opts(), &t, d("2025-01-01"), d("2025-06-22"), d("2025-12-31"));
+        match &s.markers[0].outcome {
+            Outcome::Ok {
+                before_idle,
+                velocity,
+                volume,
+                rework_pts,
+                tests_pts,
+                ..
+            } => {
+                assert!(before_idle);
+                assert_eq!((velocity, volume), (&None, &None));
+                assert_eq!((rework_pts, tests_pts), (&None, &None));
+            }
+            o => panic!("{o:?}"),
+        }
+        // Steady work before: not idle.
+        let p = speed_ups(
+            &days,
+            &opts(),
+            &Timeline::default(),
+            d("2025-01-01"),
+            d("2025-06-22"),
+            d("2025-12-31"),
+        );
+        assert!(matches!(p.phase.outcome, Outcome::Ok { before_idle: false, .. }));
     }
 
     #[test]

@@ -193,6 +193,41 @@ describe("<App>", () => {
     expect(marker).toHaveTextContent('confirm it with [[marker]] kind = "ai"');
   });
 
+  it("explains an AI marker with no work before it instead of showing empty ratios", () => {
+    window.history.replaceState(null, "", "#monthly&2026-09-01..2026-09-30");
+    const p = fixtureWithVelocity();
+    p.timeline.phases = [
+      { name: "maintenance", from: "2024-09-01" },
+      { name: "active development", from: "2026-07-20" },
+    ];
+    p.speed_ups[0]!.markers = [
+      {
+        label: "CLAUDE.md added",
+        date: "2026-07-27",
+        source: "configured",
+        status: "ok",
+        before: { from: "2026-06-01", to: "2026-07-26", weeks: 8 },
+        now: { from: "2026-08-03", to: "2026-09-27", weeks: 8 },
+        velocity: null,
+        volume: null,
+        approx: false,
+        rework_pts: null,
+        tests_pts: null,
+        crosses_phase: true,
+        spans_markers: [],
+        before_idle: true,
+      },
+    ];
+    renderApp(p);
+    const card = screen.getByRole("figure", { name: "Since “CLAUDE.md added”" });
+    expect(card).toHaveTextContent("No work in the 8 weeks before (a median of 0 lines a week)");
+    expect(card).toHaveTextContent(
+      "This marker falls in “active development” (from 2026-07-20); the weeks before it are mostly “maintenance”.",
+    );
+    expect(card).not.toHaveTextContent("Quality held?");
+    expect(card).not.toHaveTextContent(/different phases/i);
+  });
+
   it("asks for an AI marker when there is none", () => {
     window.history.replaceState(null, "", "#monthly&2026-09-01..2026-09-30");
     const p = fixtureWithVelocity();

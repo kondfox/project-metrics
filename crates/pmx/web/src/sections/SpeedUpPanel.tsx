@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { HelpTip } from "../components/ui/HelpTip";
-import type { Comparison, Ratio, Window } from "../data/types";
+import type { Comparison, Phase, Ratio, Window } from "../data/types";
 import { specUrl } from "../lib/docs";
 import { formatNumber } from "../lib/format";
 import { useDashboard, useSpeedUps } from "../state/hooks";
@@ -61,7 +61,13 @@ function title(c: Comparison, kind: "phase" | "marker"): string {
   return kind === "phase" ? `Since the start of “${c.label}”` : `Since “${c.label}”`;
 }
 
+/** The phase holding `date` (phases are oldest first). */
+function phaseAt(phases: Phase[], date: string): Phase | undefined {
+  return [...phases].reverse().find((p) => p.from <= date);
+}
+
 function Card({ c, kind }: { c: Comparison; kind: "phase" | "marker" }) {
+  const { phases } = useDashboard().project.timeline;
   const notes: ReactNode[] = [];
   if (c.source === "fallback")
     notes.push(
@@ -83,8 +89,38 @@ function Card({ c, kind }: { c: Comparison; kind: "phase" | "marker" }) {
         Too early: {c.weeks} complete week{c.weeks === 1 ? "" : "s"} since {c.since}; it needs 4 on each side.
       </p>
     );
+  } else if (c.before_idle) {
+    // No baseline: say why, and which phase the comparison really straddles, instead of empty ratios.
+    const now = phaseAt(phases, c.now.to);
+    const then = phaseAt(phases, c.before.from);
+    body = (
+      <>
+        <p className={styles.windows}>
+          last {c.now.weeks} weeks ({span(c.now)}) vs {c.before.weeks} weeks ({span(c.before)})
+        </p>
+        <p className={styles.idle}>
+          No work in the {c.before.weeks} weeks before (a median of 0 lines a week): nothing to compare
+          against.
+          {now && then && now !== then && (
+            <>
+              {" "}
+              {kind === "marker" ? "This marker" : "The window"} falls in “{now.name}” (from {now.from}); the
+              weeks before it are mostly “{then.name}”.
+            </>
+          )}
+        </p>
+      </>
+    );
   } else {
-    if (c.crosses_phase) notes.push("The two windows lie in different phases: read with care.");
+    if (c.crosses_phase) {
+      const before = phaseAt(phases, c.before.from)?.name;
+      const now = phaseAt(phases, c.now.to)?.name;
+      notes.push(
+        before && now
+          ? `Different phases: “${before}” before, “${now}” now. Read with care.`
+          : "The two windows lie in different phases: read with care.",
+      );
+    }
     if (c.spans_markers.length)
       notes.push(`Between the windows: ${c.spans_markers.map((m) => `“${m}”`).join(", ")}. Read with care.`);
     if (c.approx) notes.push("~ per active engineer-day: FTE is unknown.");

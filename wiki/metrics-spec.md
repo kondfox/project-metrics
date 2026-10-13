@@ -308,7 +308,9 @@ with a change of speed.
    the per-FTE reading is distorted until weekly FTE arrives; the box flags a window that crosses a
    phase boundary or a marker). The gap between the two is the reading: volume ×2.5 with Velocity ×1.1 is more lines,
    not harder work. A 90% bootstrap interval (weeks resampled) goes with each; a speed-up whose interval
-   holds ×1.0 is shown faded, as "no clear change".
+   holds ×1.0 is shown faded, as "no clear change". A before-window with no work (a median of 0 lines
+   added a week) has no baseline: no ratios and no guardrails, and the box says so, naming the phase the
+   comparison straddles (e.g. an AI marker that lands in the first weeks of a development phase).
 7. **Guardrails beside them:** the same two windows for rework % and tests-with-code %, as changes in
    points ("×1.8 faster, rework +6 pts" reads differently from "×1.8 faster, quality held").
 8. **Missing configuration is shown, not hidden:** with no phases, the phase comparison uses the 12

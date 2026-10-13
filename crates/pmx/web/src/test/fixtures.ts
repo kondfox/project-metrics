@@ -194,6 +194,7 @@ export function fixtureWithVelocity(): ProjectFile {
         tests_pts: -1.0,
         crosses_phase: false,
         spans_markers: ["Summer slowdown"],
+        before_idle: false,
       },
       markers: [
         {
