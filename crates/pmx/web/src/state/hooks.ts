@@ -1,6 +1,7 @@
 import { useCallback, useContext, useMemo } from "react";
 import { bucketMetrics, buckets, type Buckets } from "../data/project";
-import type { Leader, Metrics } from "../data/types";
+import type { Leader, Metrics, SpeedUps } from "../data/types";
+import { formatDate } from "../lib/dates";
 import { chartWindow } from "../lib/ranges";
 import { isMeasured, type NotMeasuredId } from "../metrics/registry";
 import { DashboardContext, type DashboardState } from "./context";
@@ -56,4 +57,18 @@ export function useLowN(): (n: number | null | undefined) => boolean {
 export function useMeasured(): (id: NotMeasuredId) => boolean {
   const notMeasured = useDashboard().project.meta.not_measured;
   return useCallback((id) => isMeasured(notMeasured, id), [notMeasured]);
+}
+
+/**
+ * Speed-ups for the selected range's end (spec §4.1): from the engine, else precomputed for the
+ * default ranges; null when neither has it.
+ */
+export function useSpeedUps(): SpeedUps | null {
+  const { project, engine, range } = useDashboard();
+  return useMemo(() => {
+    if (engine) return engine.speedUps(range.end);
+    const asOf = project.meta.as_of;
+    const end = formatDate(range.end) < asOf ? formatDate(range.end) : asOf;
+    return project.speed_ups.find((s) => s.end === end) ?? null;
+  }, [project, engine, range]);
 }

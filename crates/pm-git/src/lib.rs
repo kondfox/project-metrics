@@ -152,6 +152,37 @@ impl Git {
             .to_string())
     }
 
+    /// The oldest commit reachable from `rev` that added a file named one of `names`, at any depth
+    /// (spec §4.1: the first `CLAUDE.md` or `AGENTS.md` marks AI adoption): its SHA, author date
+    /// (`YYYY-MM-DD`, as ingest dates commits) and the matching files it added.
+    pub fn first_added(&self, rev: &str, names: &[&str]) -> Result<Option<(String, String, Vec<String>)>> {
+        let specs: Vec<String> = names.iter().map(|n| format!(":(glob)**/{n}")).collect();
+        let mut args = vec![
+            "log",
+            rev,
+            "--diff-filter=A",
+            "--date=short",
+            "--format=%x1e%H %ad",
+            "--name-only",
+            "--",
+        ];
+        args.extend(specs.iter().map(String::as_str));
+        let out = self.run(&args)?;
+        let oldest = out
+            .split('\x1e')
+            .filter_map(|rec| {
+                let mut lines = rec.lines().filter(|l| !l.trim().is_empty());
+                let (sha, date) = lines.next()?.split_once(' ')?;
+                Some((
+                    date.to_string(),
+                    sha.to_string(),
+                    lines.map(str::to_string).collect::<Vec<_>>(),
+                ))
+            })
+            .min();
+        Ok(oldest.map(|(date, sha, files)| (sha, date, files)))
+    }
+
     /// `git fetch`: updates remote-tracking refs only.
     pub fn fetch(&self) -> Result<()> {
         self.run(&["fetch", "--quiet", "--prune"]).map(|_| ())

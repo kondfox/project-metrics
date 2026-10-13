@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::day::{Day, Days, aggregate};
 use crate::metrics::{AiCompare, Leader, MetricOptions, ai_compare, metrics};
-use crate::period::{Bucket, last_complete_month, months, partial_month, partial_week, weeks};
+use crate::period::{Bucket, last_complete_month, last_complete_week_end, months, partial_month, partial_week, weeks};
 use crate::snapshot::{SnapshotPoint, VulnPackage, at_or_before, sast_diff};
+use crate::speedup::{SpeedUps, Timeline, speed_ups};
 use crate::velocity::{Package, VelocityOptions};
 
 pub const PROJECT_SCHEMA: &str = "pmx.project/1";
@@ -143,6 +144,13 @@ pub struct ProjectFile {
     pub hotspots: Vec<RepoHotspots>,
     /// `None` = not measured (no classifier configured).
     pub velocity: Option<VelocityDetail>,
+    /// Phases, markers and detected AI adoption: what speed-ups are read against (spec §4.1).
+    #[serde(default)]
+    pub timeline: Timeline,
+    /// Speed-ups for the default ranges (the headline month, the last complete week), for a page
+    /// without the engine; the engine computes any other range.
+    #[serde(default)]
+    pub speed_ups: Vec<SpeedUps>,
     pub meta: Meta,
 }
 
@@ -221,6 +229,7 @@ pub struct BuildInput {
     pub pulls: Option<PullsInfo>,
     /// Set when `days` include the scored packages (spec §4); package authors are real names here.
     pub velocity: Option<VelocityDetail>,
+    pub timeline: Timeline,
 }
 
 pub struct Series {
@@ -338,6 +347,7 @@ pub fn build(input: BuildInput) -> (ProjectFile, LeadsFile) {
         snapshots,
         pulls,
         velocity,
+        timeline,
     } = input;
     let opts = MetricOptions {
         breadth_roles: project.breadth_roles.clone(),
@@ -349,6 +359,11 @@ pub fn build(input: BuildInput) -> (ProjectFile, LeadsFile) {
     };
     let monthly = series(&days, &months(project.range_start, as_of), &opts, &snapshots, as_of);
     let weekly = series(&days, &weeks(project.range_start, as_of), &opts, &snapshots, as_of);
+    let defaults = [last_complete_month(as_of).end, last_complete_week_end(as_of)];
+    let speed_ups: Vec<SpeedUps> = defaults
+        .into_iter()
+        .map(|end| speed_ups(&days, &opts, &timeline, project.range_start, end, as_of))
+        .collect();
     let ai = match (project.ai_attribution, latest_commit) {
         (true, Some(end)) => Some(ai_compare(&days, end)),
         _ => None,
@@ -441,6 +456,8 @@ pub fn build(input: BuildInput) -> (ProjectFile, LeadsFile) {
         security: snapshots.security,
         hotspots: snapshots.hotspots,
         velocity,
+        timeline,
+        speed_ups,
         meta,
     };
     (file, leads)
@@ -462,6 +479,7 @@ mod ts_export {
         crate::Metrics::export_all(&cfg).unwrap();
         crate::fleet::FleetFile::export_all(&cfg).unwrap();
         crate::fleet::Pooled::export_all(&cfg).unwrap();
+        crate::speedup::SpeedUps::export_all(&cfg).unwrap();
     }
 }
 

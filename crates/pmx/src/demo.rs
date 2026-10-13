@@ -624,6 +624,8 @@ pub fn generate_variant(dir: &Path, as_of: NaiveDate, v: &Variant) -> Result<Wor
         },
         classifiers: BTreeMap::new(),
         velocity: None,
+        phases: Vec::new(),
+        markers: Vec::new(),
     };
     config.validate()?;
     std::fs::write(

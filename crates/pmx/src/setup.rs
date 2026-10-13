@@ -328,6 +328,8 @@ pub fn new_config(name: String, range_start: NaiveDate, suggestions: &[Suggestio
         snapshots: Default::default(),
         classifiers: BTreeMap::new(),
         velocity: None,
+        phases: Vec::new(),
+        markers: Vec::new(),
     };
     config.validate()?;
     Ok(config)

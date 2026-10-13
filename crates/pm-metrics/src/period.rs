@@ -93,6 +93,11 @@ pub fn last_complete_month(as_of: NaiveDate) -> Bucket {
     }
 }
 
+/// The end of the last complete ISO week on `as_of`: the last Sunday on or before it.
+pub fn last_complete_week_end(as_of: NaiveDate) -> NaiveDate {
+    as_of - Days::new((as_of.weekday().num_days_from_monday() as u64 + 1) % 7)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,5 +134,8 @@ mod tests {
         assert!(!partial_week(d("2026-10-11")));
         assert_eq!(last_complete_month(d("2026-10-09")).label, "2026-09");
         assert_eq!(last_complete_month(d("2026-09-30")).label, "2026-09");
+        assert_eq!(last_complete_week_end(d("2026-10-09")), d("2026-10-04"));
+        assert_eq!(last_complete_week_end(d("2026-10-11")), d("2026-10-11"));
+        assert_eq!(last_complete_week_end(d("2026-10-12")), d("2026-10-11"));
     }
 }

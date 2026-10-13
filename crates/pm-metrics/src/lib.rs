@@ -7,6 +7,7 @@ pub mod model;
 pub mod period;
 pub mod pr;
 pub mod snapshot;
+pub mod speedup;
 pub mod stats;
 pub mod velocity;
 

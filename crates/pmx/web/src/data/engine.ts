@@ -1,4 +1,4 @@
-import type { FleetFile, Metrics, Pooled, ProjectFile } from "./types";
+import type { FleetFile, Metrics, Pooled, ProjectFile, SpeedUps } from "./types";
 import { formatDate, type DateRange } from "../lib/dates";
 
 /**
@@ -7,6 +7,8 @@ import { formatDate, type DateRange } from "../lib/dates";
  */
 export interface MetricsEngine {
   range(range: DateRange): Metrics;
+  /** Speed-ups for a range ending on `end` (spec §4.1). */
+  speedUps(end: Date): SpeedUps;
 }
 
 /** The raw exports of pm_wasm.wasm. */
@@ -61,6 +63,15 @@ export function engineFrom(
   });
   return {
     range: (r) => call({ op: "range", key, start: formatDate(r.start), end: formatDate(r.end) }) as Metrics,
+    speedUps: (end) =>
+      call({
+        op: "speedup",
+        key,
+        end: formatDate(end),
+        range_start: project.project.range_start,
+        as_of: project.meta.as_of,
+        timeline: project.timeline,
+      }) as SpeedUps,
   };
 }
 

@@ -179,6 +179,30 @@ describe("<App>", () => {
     expect(screen.queryByRole("table", { name: "Points by person" })).not.toBeInTheDocument();
   });
 
+  it("shows the speed-ups and what to configure", () => {
+    window.history.replaceState(null, "", "#monthly&2026-09-01..2026-09-30");
+    renderApp(fixtureWithVelocity());
+    const phase = screen.getByRole("figure", { name: "Against the 12 weeks before" });
+    expect(phase).toHaveTextContent("No phases set: add [[phase]] to pmx.toml");
+    expect(within(phase).getByLabelText("Velocity ×1.8")).toHaveTextContent("90%: ×1.2–×2.4");
+    expect(within(phase).getByLabelText("Volume ×1.1")).toHaveTextContent("no clear change");
+    expect(phase).toHaveTextContent("Rework +6.2 pts");
+    expect(phase).toHaveTextContent("Between the windows: “Summer slowdown”. Read with care.");
+    const marker = screen.getByRole("figure", { name: "Since “CLAUDE.md added”" });
+    expect(marker).toHaveTextContent("Too early: 2 complete weeks since 2026-09-08");
+    expect(marker).toHaveTextContent('confirm it with [[marker]] kind = "ai"');
+  });
+
+  it("asks for an AI marker when there is none", () => {
+    window.history.replaceState(null, "", "#monthly&2026-09-01..2026-09-30");
+    const p = fixtureWithVelocity();
+    p.speed_ups[0]!.markers = [];
+    renderApp(p);
+    expect(screen.getByRole("figure", { name: "No AI marker" })).toHaveTextContent(
+      'add [[marker]] with kind = "ai" to pmx.toml',
+    );
+  });
+
   it("shows points by person only in the lead's private view", () => {
     renderApp(fixtureWithVelocity(), fixtureLeads);
     const table = screen.getByRole("table", { name: "Points by person" });

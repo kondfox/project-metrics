@@ -83,3 +83,20 @@ model = "qwen3-coder:30b"
 [velocity]
 classifier = "claude"             # project default
 # since = "2026-01-01"            # score work packages from this date only (default range_start)
+
+# Phases and markers: what Velocity's speed-ups are read against (spec §4.1). A phase runs until the
+# next one starts; compare within a phase, never across maintenance and active development.
+[[phase]]
+name = "maintenance"
+from = "2024-09-01"
+
+[[phase]]
+name = "active development"
+from = "2026-02-02"
+
+# A marker with kind = "ai" gets a before / after speed-up. Without one, pmx uses the first commit
+# that added a CLAUDE.md or AGENTS.md, and the dashboard asks you to confirm it here.
+[[marker]]
+name = "AI-assisted work (CLAUDE.md added)"
+date = "2026-04-14"
+kind = "ai"

@@ -14,6 +14,7 @@ export const SPEC_ANCHORS = {
   "§3.4": "34-duplication---s_dup",
   "§3.5": "35-trend-only-companions-not-in-the-score",
   "§4": "4-velocity-fleet-headline--velocity-indexmd",
+  "§4.1": "41-speed-up-phases-and-markers-decided-2026-10-13-plan-d57",
   "§5": "5-multi-stack-developers-fleet-headline--fullstack-metricsmd",
   "§6": "6-ai-assisted-fleet-headline",
   "§7.1": "71-dependency-vulnerabilities",

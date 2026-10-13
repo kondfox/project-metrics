@@ -6,6 +6,8 @@ import type { ProjectInfo } from "./ProjectInfo";
 import type { RepoHotspots } from "./RepoHotspots";
 import type { SecurityDetail } from "./SecurityDetail";
 import type { SnapshotPoint } from "./SnapshotPoint";
+import type { SpeedUps } from "./SpeedUps";
+import type { Timeline } from "./Timeline";
 import type { VelocityDetail } from "./VelocityDetail";
 
 export type ProjectFile = { schema: string, project: ProjectInfo, 
@@ -21,4 +23,13 @@ snapshots: { [key in string]: SnapshotPoint }, weeks: Array<string>, months: Arr
 /**
  * `None` = not measured (no classifier configured).
  */
-velocity: VelocityDetail | null, meta: Meta, };
+velocity: VelocityDetail | null, 
+/**
+ * Phases, markers and detected AI adoption: what speed-ups are read against (spec §4.1).
+ */
+timeline: Timeline, 
+/**
+ * Speed-ups for the default ranges (the headline month, the last complete week), for a page
+ * without the engine; the engine computes any other range.
+ */
+speed_ups: Array<SpeedUps>, meta: Meta, };

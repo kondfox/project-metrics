@@ -1,5 +1,11 @@
 import { BarChart, LineChart } from "echarts/charts";
-import { GridComponent, LegendComponent, MarkAreaComponent, TooltipComponent } from "echarts/components";
+import {
+  GridComponent,
+  LegendComponent,
+  MarkAreaComponent,
+  MarkLineComponent,
+  TooltipComponent,
+} from "echarts/components";
 import * as echarts from "echarts/core";
 import type { EChartsCoreOption } from "echarts/core";
 import { SVGRenderer } from "echarts/renderers";
@@ -12,6 +18,7 @@ echarts.use([
   GridComponent,
   LegendComponent,
   MarkAreaComponent,
+  MarkLineComponent,
   TooltipComponent,
   SVGRenderer,
 ]);

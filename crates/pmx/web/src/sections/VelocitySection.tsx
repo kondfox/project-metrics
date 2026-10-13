@@ -11,6 +11,7 @@ import { formatDate, type DateRange } from "../lib/dates";
 import { formatNumber } from "../lib/format";
 import { useDashboard, useMeasured } from "../state/hooks";
 import { fteOver, velocityNote } from "../metrics/velocity";
+import { SpeedUpPanel } from "./SpeedUpPanel";
 import type { Package, VelocityDetail, VelocityOptions } from "../data/types";
 
 /** How the packages were grouped (spec §4), and where PR data was missing. */
@@ -95,6 +96,7 @@ function ActivityCharts() {
   return (
     <>
       <TimeSeriesChart
+        marks
         title="Commits and lines added"
         series={[
           { metric: "commits", kind: "bar" },
@@ -102,6 +104,7 @@ function ActivityCharts() {
         ]}
       />
       <TimeSeriesChart
+        marks
         title="Commit size (lines)"
         hint="added + deleted source lines per commit"
         series={[
@@ -126,6 +129,7 @@ export function VelocitySection() {
           <NotMeasuredTile id="velocity" />
           <ActivityTiles />
         </TileGrid>
+        <SpeedUpPanel />
         <ChartGrid>
           <ActivityCharts />
         </ChartGrid>
@@ -166,8 +170,10 @@ export function VelocitySection() {
         <MetricTile id="verification_debt_pts" />
         <ActivityTiles />
       </TileGrid>
+      <SpeedUpPanel />
       <ChartGrid>
         <TimeSeriesChart
+          marks
           title="Velocity"
           hint="points per FTE-day (per active engineer-day when FTE is unknown); read beside Quality"
           decimals={2}
@@ -177,6 +183,7 @@ export function VelocitySection() {
           ]}
         />
         <TimeSeriesChart
+          marks
           title="Complexity density"
           hint="points per 1,000 added lines and per commit"
           decimals={2}
@@ -187,6 +194,7 @@ export function VelocitySection() {
         />
         {v.options.fte.length > 0 && (
           <TimeSeriesChart
+            marks
             title="FTE"
             hint="mean FTE over each period's business days: the capacity Velocity is divided by"
             decimals={1}
@@ -195,6 +203,7 @@ export function VelocitySection() {
         )}
         <ActivityCharts />
         <TimeSeriesChart
+          marks
           title="Work packages by size"
           hint="packages delivered per period, by the rubric's size (XS 1 point … XXL 13)"
           unit="count"

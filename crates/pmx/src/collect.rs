@@ -11,9 +11,11 @@ use anyhow::{Context, Result, anyhow};
 use chrono::{Days as ChronoDays, NaiveDate};
 use pm_classify::{Classifier, TestRules};
 use pm_codehost::Selection;
+use pm_config::{Config, MarkerKind};
 use pm_config::{Identity, RepoConfig, Workspace};
 use pm_git::{Dialect, Git, LogRange, ReworkCounts};
 use pm_metrics::model::{BuildInput, ProjectInfo, RepoInfo, SnapshotInput};
+use pm_metrics::speedup::{Adoption, AiAdoption, Marker, Phase, Timeline};
 use pm_metrics::{Days, LeadsFile, ProjectFile, merge_days};
 use pm_progress::{Progress, fmt_n};
 use sha2::{Digest, Sha256};
@@ -614,6 +616,7 @@ pub fn collect(ws: &Workspace, opts: &CollectOptions) -> Result<Collected> {
         dates.extend(r.ingest.commit_dates.range(..=opts.as_of).copied());
         repos.push(r.info);
     }
+    let timeline = timeline(config, &repos, &plans, opts.as_of);
 
     // Snapshots and pull requests run at the same time (plan §4).
     let pull_settings = PullSettings {
@@ -757,12 +760,63 @@ pub fn collect(ws: &Workspace, opts: &CollectOptions) -> Result<Collected> {
         snapshots: snapshots.map(|(input, _)| input).unwrap_or_default(),
         pulls: pulls.info,
         velocity,
+        timeline,
     });
     Ok(Collected {
         project,
         leads,
         warnings: p.warnings(),
     })
+}
+
+/// Files whose first appearance marks AI-assisted work (spec §4.1).
+const AGENT_FILES: [&str; 2] = ["CLAUDE.md", "AGENTS.md"];
+
+/// Phases and markers from `pmx.toml`, and AI adoption as the repos show it: each repo's first
+/// `CLAUDE.md` or `AGENTS.md` on its measured tip, up to `as_of` (spec §4.1).
+fn timeline(config: &Config, repos: &[RepoInfo], plans: &[RepoPlan], as_of: NaiveDate) -> Timeline {
+    let mut found: Vec<Adoption> = repos
+        .iter()
+        .zip(plans)
+        .filter_map(|(info, plan)| {
+            let (sha, date, files) = Git::open(&plan.dir).first_added(&info.sha, &AGENT_FILES).ok()??;
+            let date = NaiveDate::parse_from_str(&date, "%Y-%m-%d").ok()?;
+            (date <= as_of).then(|| Adoption {
+                repo: info.name.clone(),
+                date,
+                files,
+                sha,
+            })
+        })
+        .collect();
+    found.sort_by(|a, b| (a.date, &a.repo).cmp(&(b.date, &b.repo)));
+    let mut markers: Vec<Marker> = config
+        .markers
+        .iter()
+        .map(|m| Marker {
+            name: m.name.clone(),
+            date: m.date,
+            kind: m.kind.map(|k| match k {
+                MarkerKind::Ai => "ai".to_string(),
+            }),
+        })
+        .collect();
+    markers.sort_by_key(|m| m.date);
+    Timeline {
+        phases: config
+            .phases
+            .iter()
+            .map(|p| Phase {
+                name: p.name.clone(),
+                from: p.from,
+            })
+            .collect(),
+        markers,
+        ai_adoption: AiAdoption {
+            first: found.first().cloned(),
+            repos: found,
+        },
+    }
 }
 
 /// Write `out/project.json` and `out/private/leads.json`.

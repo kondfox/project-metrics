@@ -54,6 +54,39 @@ pub struct Config {
     pub classifiers: BTreeMap<String, ClassifierConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub velocity: Option<Velocity>,
+    /// Dated stretches of the project, oldest first (spec §4.1).
+    #[serde(default, rename = "phase", skip_serializing_if = "Vec::is_empty")]
+    pub phases: Vec<PhaseConfig>,
+    /// Dated events: AI tooling arriving, a team change (spec §4.1).
+    #[serde(default, rename = "marker", skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<MarkerConfig>,
+}
+
+/// `[[phase]]`: from `from` until the next phase starts (spec §4.1).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PhaseConfig {
+    pub name: String,
+    #[serde(with = "date_str")]
+    pub from: NaiveDate,
+}
+
+/// `[[marker]]`: a dated event; `kind = "ai"` gets a before / after speed-up (spec §4.1).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MarkerConfig {
+    pub name: String,
+    #[serde(with = "date_str")]
+    pub date: NaiveDate,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<MarkerKind>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MarkerKind {
+    /// AI tooling arriving.
+    Ai,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -497,6 +530,20 @@ impl Config {
                 return bad(format!("[[secrets_triage]] names unknown repo `{}`", t.repo));
             }
         }
+        for w in self.phases.windows(2) {
+            if w[1].from <= w[0].from {
+                return bad(format!(
+                    "[[phase]] `{}` starts on or before `{}`: list phases oldest first, one per start date",
+                    w[1].name, w[0].name
+                ));
+            }
+        }
+        if let Some(p) = self.phases.iter().find(|p| p.name.trim().is_empty()) {
+            return bad(format!("[[phase]] from {} needs a `name`", p.from));
+        }
+        if let Some(m) = self.markers.iter().find(|m| m.name.trim().is_empty()) {
+            return bad(format!("[[marker]] on {} needs a `name`", m.date));
+        }
         let mut owner: BTreeMap<String, &str> = BTreeMap::new();
         for (person, ids) in &self.people.persons {
             for id in ids {
@@ -599,6 +646,9 @@ mod tests {
         assert_eq!(cfg.classifiers["claude"].provider, Provider::ClaudeCode);
         assert_eq!(cfg.classifier_for(&cfg.repos[0]), Some("claude"));
         assert_eq!(cfg.classifier_for(&cfg.repos[2]), Some("local"));
+        assert_eq!(cfg.phases.len(), 2);
+        assert_eq!(cfg.phases[1].name, "active development");
+        assert_eq!(cfg.markers[0].kind, Some(MarkerKind::Ai));
     }
 
     #[test]
@@ -607,6 +657,8 @@ mod tests {
         let again = Config::parse(&cfg.to_toml(), Path::new("x")).unwrap();
         assert_eq!(again.people, cfg.people);
         assert_eq!(again.repos.len(), cfg.repos.len());
+        assert_eq!(again.phases, cfg.phases);
+        assert_eq!(again.markers, cfg.markers);
     }
 
     #[test]
@@ -642,6 +694,22 @@ mod tests {
                 "{repo}[classifiers.c]\nprovider = \"claude-code\"\nfallback = \"d\"\n"
             ))
             .contains("fallback `d`")
+        );
+        let phase = |name: &str, from: &str| format!("[[phase]]\nname = \"{name}\"\nfrom = \"{from}\"\n");
+        assert!(
+            err(&format!(
+                "{repo}{}{}",
+                phase("b", "2025-06-01"),
+                phase("a", "2025-01-01")
+            ))
+            .contains("list phases oldest first")
+        );
+        assert!(err(&format!("{repo}{}", phase(" ", "2025-06-01"))).contains("needs a `name`"));
+        assert!(
+            err(&format!(
+                "{repo}[[marker]]\nname = \"x\"\ndate = \"2025-01-01\"\nkind = \"team\"\n"
+            ))
+            .contains("unknown variant")
         );
     }
 

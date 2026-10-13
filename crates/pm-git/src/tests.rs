@@ -212,3 +212,31 @@ fn merges_and_what_they_brought_in() {
     // The direct push is on the first parent's side: not the MR's.
     assert_eq!(subjects, ["add b", "add c"]);
 }
+
+#[test]
+fn first_agent_instructions_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    git(dir, &["init", "-q"], "2025-01-01", "x", "x@example.com");
+    write(dir, "src/app.ts", "const a = 1;\n");
+    commit(dir, "2025-01-01", "init");
+    let g = Git::open(dir);
+    assert_eq!(g.first_added("HEAD", &["CLAUDE.md", "AGENTS.md"]).unwrap(), None);
+
+    write(dir, "app/AGENTS.md", "# agents\n");
+    write(dir, "app/CLAUDE.md", "# claude\n");
+    commit(dir, "2025-02-03", "agent instructions");
+    write(dir, "CLAUDE.md", "# root\n");
+    write(dir, "NOTCLAUDE.md", "# no\n");
+    commit(dir, "2025-03-04", "root instructions");
+
+    let (_, date, files) = g.first_added("HEAD", &["CLAUDE.md", "AGENTS.md"]).unwrap().unwrap();
+    assert_eq!(date, "2025-02-03");
+    assert_eq!(files, ["app/AGENTS.md", "app/CLAUDE.md"]);
+    let (_, date, files) = g.first_added("HEAD", &["NOPE.md", "CLAUDE.md"]).unwrap().unwrap();
+    assert_eq!(
+        (date.as_str(), files.len()),
+        ("2025-02-03", 1),
+        "only the names asked for"
+    );
+}

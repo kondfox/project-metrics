@@ -14,6 +14,9 @@
 //!   `load` also `"velocity_basis"`, and `{"op": "fleet", "keys": […], "start", "end"}` returns the
 //!   pooled fleet row (`Pooled`, pm-metrics `fleet`).
 //!
+//! - `{"op": "speedup", "key", "end": "YYYY-MM-DD", "range_start", "as_of", "timeline": project.timeline}`
+//!   → `SpeedUps` (spec §4.1) for a range ending on `end`.
+//!
 //! Errors come back as `{"error": "…"}`.
 
 use std::cell::RefCell;
@@ -25,6 +28,7 @@ use std::collections::BTreeMap;
 use pm_metrics::fleet::{Member, pool};
 use pm_metrics::model::{PullsInfo, mix_roles};
 use pm_metrics::snapshot::SnapshotPoint;
+use pm_metrics::speedup::{Timeline, speed_ups};
 use pm_metrics::velocity::VelocityOptions;
 use pm_metrics::{Days, MetricOptions};
 use serde::Deserialize;
@@ -64,6 +68,15 @@ enum Request {
         start: NaiveDate,
         end: NaiveDate,
     },
+    Speedup {
+        #[serde(default)]
+        key: String,
+        end: NaiveDate,
+        range_start: NaiveDate,
+        as_of: NaiveDate,
+        #[serde(default)]
+        timeline: Timeline,
+    },
 }
 
 /// Handle one JSON request.
@@ -102,6 +115,17 @@ pub fn handle(request: &str) -> String {
         Ok(Request::Range { key, start, end }) => STATE.with(|s| match s.borrow().get(&key) {
             None => json!({ "error": "load the project first" }),
             Some(m) => serde_json::to_value(m.metrics(start, end)).expect("metrics serialize"),
+        }),
+        Ok(Request::Speedup {
+            key,
+            end,
+            range_start,
+            as_of,
+            timeline,
+        }) => STATE.with(|s| match s.borrow().get(&key) {
+            None => json!({ "error": "load the project first" }),
+            Some(m) => serde_json::to_value(speed_ups(&m.days, &m.opts, &timeline, range_start, end, as_of))
+                .expect("speed-ups serialize"),
         }),
         Ok(Request::Fleet { keys, start, end }) => STATE.with(|s| {
             let s = s.borrow();
@@ -213,6 +237,21 @@ mod tests {
             &json!({"op": "fleet", "keys": ["a", "zz"], "start": "2025-01-01", "end": "2025-01-31"}).to_string(),
         );
         assert!(missing.contains("`zz` is not loaded"));
+    }
+
+    #[test]
+    fn speed_up_for_any_range_end() {
+        let load =
+            json!({"op": "load", "key": "s", "days": days(), "breadth_roles": ["backend"], "ai_attribution": false});
+        call(load);
+        let r = call(
+            json!({"op": "speedup", "key": "s", "end": "2025-02-28", "range_start": "2025-01-01",
+            "as_of": "2025-03-01", "timeline": {"phases": [{"name": "dev", "from": "2025-01-06"}]}}),
+        );
+        assert_eq!(r["end"], "2025-02-28");
+        assert_eq!(r["phase"]["label"], "dev");
+        assert_eq!(r["phase"]["status"], "too_early", "{r}");
+        assert_eq!(r["markers"], json!([]));
     }
 
     #[test]

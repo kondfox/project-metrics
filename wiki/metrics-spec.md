@@ -273,6 +273,49 @@ only month-ends; `since` limits how far back trees are scanned.
 
 Per-person points exist only in the private lead drill-down — never a headline.
 
+### 4.1 Speed-up: phases and markers (decided 2026-10-13, plan D57)
+
+"Is the team faster than before?", asked two ways, never against a fixed lookback: a year-ago or
+trailing comparison mixes up a change of **phase** (maintenance → active development) and of staffing
+with a change of speed.
+
+1. **Phases** (`[[phase]]`, §10.1): dated, owner-declared stretches of the project (`name`, `from`); each
+   runs until the next one starts. A phase is the context a speed-up is read in: comparisons never mix a
+   maintenance stretch with a development one.
+2. **Markers** (`[[marker]]`, §10.1): dated events (`name`, `date`, optional `kind = "ai"`), e.g. AI
+   tooling arriving or a team change. Markers are drawn on the Velocity charts; phases shade them.
+3. **AI adoption, detected:** the first commit, on the measured branch (or pinned `rev`), that adds a
+   `CLAUDE.md` or `AGENTS.md` at any depth, in any of the project's repos. Per repo too, as adoption is
+   often staggered (one repo first, the main apps weeks later). `project.json` records the date, repo,
+   file and SHA. It stands in for an AI marker only while none is configured, and says so.
+4. **Two comparisons** in the Velocity section (context, never a headline or a fleet column; read beside
+   the Quality guardrails, item 7):
+   - **Phase:** the last *W* complete weeks up to the range's end vs the **first *W* weeks of the
+     current phase** (the phase holding the range's end). "Faster than when this phase began?"
+   - **Marker:** the same last *W* weeks vs the ***W* weeks before an AI marker** (configured, else
+     detected), one row per AI marker, latest first: adoption is often staggered ("first repo", then
+     "the main apps"). "Faster since the AI tooling?" Marked *spans a phase change* when the
+     before-window crosses a phase boundary.
+5. **Window *W*:** 8 weeks when the phase (or the stretch since the marker) holds two non-overlapping
+   8-week windows, else 4; below that, no number: "too early: *n* weeks since <date>". Partial weeks and
+   weeks before `[velocity] since` (for Velocity) are left out; the window and its weeks are shown.
+6. **Two speed-ups per comparison**, each = median of the weekly values now ÷ median before:
+   - **Velocity speed-up:** points per FTE-day (§4 item 4);
+   - **Volume speed-up:** source lines added per FTE-day (§2).
+
+   FTE-days come from the FTE provider (§10.2), today the static value (so across a change in team size
+   the per-FTE reading is distorted until weekly FTE arrives; the box flags a window that crosses a
+   phase boundary or a marker). The gap between the two is the reading: volume ×2.5 with Velocity ×1.1 is more lines,
+   not harder work. A 90% bootstrap interval (weeks resampled) goes with each; a speed-up whose interval
+   holds ×1.0 is shown faded, as "no clear change".
+7. **Guardrails beside them:** the same two windows for rework % and tests-with-code %, as changes in
+   points ("×1.8 faster, rework +6 pts" reads differently from "×1.8 faster, quality held").
+8. **Missing configuration is shown, not hidden:** with no phases, the phase comparison uses the 12
+   weeks before the window and says "No phases set: add `[[phase]]` to pmx.toml to compare with the start
+   of the current phase". With no AI marker, the detected adoption date is used and labelled *detected —
+   confirm with `[[marker]] kind = "ai"`*; with neither, the marker box says what to add.
+9. Computed in `pm-metrics` (also in the WASM engine, for any range), never in the dashboard.
+
 ---
 
 ## 5. Multi-stack developers (fleet headline) — [fullstack-metrics.md](fullstack-metrics.md)
@@ -441,6 +484,8 @@ setup commands: [tool-implementation-plan.md §3](tool-implementation-plan.md#3-
 | `[[secrets_triage]]` | `repo, file, rule?, verdict (false-positive · rotated · accepted), by, date` |
 | `[snapshots]` | `cadence` (`weekly` · `monthly`), `sast_rules` (unset = bundled `pmx-sast@1`; semgrep rule files or folders; `"bundled"` adds the bundled set; `[]` = off), `since` (first date to scan), `jobs` (trees scanned at once, default 2), `enabled` |
 | `[classifiers.<name>]`, `[velocity] classifier` | LLM classifiers (§10.3) |
+| `[[phase]]` | `name`, `from`: a dated stretch of the project (maintenance, active development…), until the next phase starts (§4.1) |
+| `[[marker]]` | `name`, `date`, optional `kind = "ai"`: a dated event drawn on the charts and compared before / after (§4.1) |
 
 ### 10.2 FTE provider (external source, stub in v1)
 - Interface: `fte(project, date) → float | null` (FTE on that day; a week/month uses the mean over its

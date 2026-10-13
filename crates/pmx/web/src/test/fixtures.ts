@@ -72,6 +72,8 @@ export function fixtureProject(over: Partial<ProjectFile["project"]> = {}): Proj
     security: null,
     hotspots: [],
     velocity: null,
+    timeline: { phases: [], markers: [], ai_adoption: { first: null, repos: [] } },
+    speed_ups: [],
     meta: {
       generated_at: "2026-10-01T00:00:00Z",
       as_of: "2026-09-30",
@@ -166,6 +168,45 @@ export function fixtureWithPulls(): ProjectFile {
 /** The fixture with scored work packages; FTE unknown in September's second package's month. */
 export function fixtureWithVelocity(): ProjectFile {
   const p = fixtureProject();
+  const ratio = (now: number, before: number, low: number, high: number) => ({
+    now,
+    before,
+    ratio: now / before,
+    low,
+    high,
+    weeks_now: 8,
+    weeks_before: 12,
+  });
+  p.speed_ups = [
+    {
+      end: "2026-09-30",
+      phase: {
+        label: "the 12 weeks before",
+        date: "2026-05-04",
+        source: "fallback",
+        status: "ok",
+        before: { from: "2026-05-04", to: "2026-07-26", weeks: 12 },
+        now: { from: "2026-07-27", to: "2026-09-20", weeks: 8 },
+        velocity: ratio(0.36, 0.2, 1.2, 2.4),
+        volume: ratio(1100, 1000, 0.8, 1.4),
+        approx: false,
+        rework_pts: 6.2,
+        tests_pts: -1.0,
+        crosses_phase: false,
+        spans_markers: ["Summer slowdown"],
+      },
+      markers: [
+        {
+          label: "CLAUDE.md added",
+          date: "2026-09-08",
+          source: "detected",
+          status: "too_early",
+          weeks: 2,
+          since: "2026-09-08",
+        },
+      ],
+    },
+  ];
   const m = (a: number | null, b: number | null) => [a, b];
   Object.assign(p.series_monthly, {
     velocity: m(0.31, 0.2),

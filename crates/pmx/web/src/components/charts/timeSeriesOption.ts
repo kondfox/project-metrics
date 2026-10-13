@@ -31,6 +31,14 @@ export interface TimeSeriesInput {
   /** A target band on the left axis, e.g. [15, 25]. */
   band?: [number, number];
   max?: number;
+  /** Phase starts (solid) and markers (dashed) as vertical lines at a bucket (spec §4.1). */
+  marks?: ChartMark[];
+}
+
+export interface ChartMark {
+  index: number;
+  label: string;
+  kind: "phase" | "marker";
 }
 
 /**
@@ -91,6 +99,29 @@ export function buildTimeSeriesOption(input: TimeSeriesInput): EChartsCoreOption
             ? { value: v, symbol: "emptyCircle", symbolSize: 7, itemStyle: { opacity: 0.45 } }
             : v,
       ),
+      markLine:
+        k === 0 && input.marks?.length
+          ? {
+              // Names show on hover only: several lines with rotated labels crowd a small chart.
+              symbol: "none",
+              animation: false,
+              data: input.marks.map((m) => ({
+                xAxis: labels[m.index],
+                lineStyle: { color: theme.muted, width: 1, type: m.kind === "phase" ? "solid" : "dashed" },
+                label: { show: false, formatter: m.label },
+                emphasis: {
+                  lineStyle: { width: 2 },
+                  label: {
+                    show: true,
+                    formatter: m.label,
+                    color: theme.ink,
+                    fontSize: 11,
+                    position: "insideEndTop",
+                  },
+                },
+              })),
+            }
+          : undefined,
       markArea:
         k === 0 && (shadeRange || input.band)
           ? {

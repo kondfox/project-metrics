@@ -18,7 +18,7 @@ function input(over: Partial<TimeSeriesInput> = {}): TimeSeriesInput {
 type Opt = {
   xAxis: { data: string[] };
   yAxis: unknown[];
-  series: Array<{ data: unknown[]; markArea?: { data: unknown[] } }>;
+  series: Array<{ data: unknown[]; markArea?: { data: unknown[] }; markLine?: { data: unknown[] } }>;
 };
 
 describe("buildTimeSeriesOption", () => {
@@ -36,6 +36,31 @@ describe("buildTimeSeriesOption", () => {
     const areas = o.series[0]!.markArea!.data as Array<Array<Record<string, unknown>>>;
     expect(areas[0]![0]).toMatchObject({ yAxis: 15 });
     expect(areas[1]![0]).toMatchObject({ xAxis: "2026-W39" });
+  });
+
+  it("draws phase starts solid and markers dashed, on the first series only", () => {
+    const o = buildTimeSeriesOption(
+      input({
+        series: [
+          { label: "a", values: [1, 2, 3] },
+          { label: "b", values: [1, 2, 3] },
+        ],
+        marks: [
+          { index: 0, label: "development", kind: "phase" },
+          { index: 2, label: "CLAUDE.md added", kind: "marker" },
+        ],
+      }),
+    ) as unknown as Opt;
+    const lines = o.series[0]!.markLine!.data as Array<
+      Record<string, { type?: string; formatter?: string; show?: boolean }>
+    >;
+    expect(lines.every((l) => l.label!.show === false)).toBe(true); // named on hover
+    expect(lines.map((l) => [l.xAxis, l.lineStyle!.type, l.label!.formatter])).toEqual([
+      ["2026-W38", "solid", "development"],
+      ["2026-W40*", "dashed", "CLAUDE.md added"],
+    ]);
+    expect(o.series[1]!.markLine).toBeUndefined();
+    expect((buildTimeSeriesOption(input()) as unknown as Opt).series[0]!.markLine).toBeUndefined();
   });
 
   it("adds a right axis only when a series uses it", () => {
