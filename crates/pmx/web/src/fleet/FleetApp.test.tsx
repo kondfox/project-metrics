@@ -44,6 +44,23 @@ describe("<FleetRoot>", () => {
     expect(names.map((n) => n?.replace(/as of.*/, ""))).toEqual(["Fleet", "Acme CRM", "Acme Shop"]);
   });
 
+  it("exports the table as shown, fleet row first, with each value's change", async () => {
+    let blob: Blob | null = null;
+    vi.spyOn(URL, "createObjectURL").mockImplementation((b) => ((blob = b as Blob), "blob:export"));
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    window.history.replaceState(null, "", "#monthly&2026-09-01..2026-09-30");
+    renderFleet();
+    await userEvent.click(screen.getByRole("button", { name: "Export ▾" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /^CSV/ }));
+    const lines = (await blob!.text()).split("\r\n");
+    expect(lines[0]).toMatch(/^Row,From,To,As of,Velocity,Velocity change,Quality,Quality change,/);
+    expect(lines.slice(1, 4).map((l) => l.split(",")[0])).toEqual(["Fleet", "Acme CRM", "Acme Shop"]);
+    // Fleet quality 60 → 63.2.
+    expect(lines[1]!.split(",").slice(6, 8).map(Number)).toEqual([63.2, expect.closeTo(3.2, 6)]);
+    vi.restoreAllMocks();
+  });
+
   it("draws a trend line under each value", () => {
     window.history.replaceState(null, "", "#monthly&2026-09-01..2026-09-30");
     renderFleet();

@@ -42,3 +42,23 @@
 .bad {
   color: var(--bad);
 }
+
+/* PDF (A4 portrait): eight columns fit by wrapping names and headers and shrinking the cells. */
+:global(html.printing) .table {
+  font-size: 11px;
+}
+:global(html.printing) .table th,
+:global(html.printing) .table td {
+  padding: 5px 4px;
+}
+:global(html.printing) .table thead th,
+:global(html.printing) .table tbody th {
+  white-space: normal;
+}
+:global(html.printing) .table svg {
+  width: 52px;
+  height: 16px;
+}
+:global(html.printing) .table .muted {
+  white-space: normal;
+}

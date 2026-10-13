@@ -45,3 +45,8 @@
 .sparkline circle {
   fill: var(--accent);
 }
+
+/* PDF (A4 portrait): two charts a row. */
+:global(html.printing) .grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}

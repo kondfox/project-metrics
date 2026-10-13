@@ -16,7 +16,7 @@ export function PackagesTable({ packages }: { packages: Package[] }) {
       visibleRows={10}
       caption={`${formatNumber(packages.length)} packages in this range, newest first. R1 layers · R2 data model · R3 contract · R4 algorithmic · R5 blast radius · R6 verification need.`}
       columns={[
-        { header: "Date", cell: (p) => p.date },
+        { header: "Date", cell: (p) => p.date, nowrap: true },
         { header: "Package", cell: (p) => p.description || p.id },
         ...AXES.map((a, i) => ({
           header: a,

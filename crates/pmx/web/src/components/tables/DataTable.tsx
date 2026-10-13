@@ -5,6 +5,8 @@ export interface Column<T> {
   header: ReactNode;
   cell(row: T): ReactNode;
   align?: "left" | "right";
+  /** Keep the cell on one line (a date, an id). */
+  nowrap?: boolean;
   key?: string;
 }
 
@@ -45,7 +47,8 @@ export function DataTable<T>(props: {
   variant?: "default" | "private";
   visibleRows?: number;
 }) {
-  const right = (c: Column<T>) => (c.align === "right" ? styles.right : undefined);
+  const cls = (c: Column<T>) =>
+    [c.align === "right" && styles.right, c.nowrap && styles.nowrap].filter(Boolean).join(" ") || undefined;
   const scroll = props.visibleRows != null;
   const ref = useVisibleRows(props.visibleRows, props.rows);
   return (
@@ -58,7 +61,7 @@ export function DataTable<T>(props: {
           <thead>
             <tr>
               {props.columns.map((c, i) => (
-                <th key={c.key ?? i} className={right(c)} scope="col">
+                <th key={c.key ?? i} className={cls(c)} scope="col">
                   {c.header}
                 </th>
               ))}
@@ -68,7 +71,7 @@ export function DataTable<T>(props: {
             {props.rows.map((row, r) => (
               <tr key={props.rowKey(row, r)}>
                 {props.columns.map((c, i) => (
-                  <td key={c.key ?? i} className={right(c)}>
+                  <td key={c.key ?? i} className={cls(c)}>
                     {c.cell(row)}
                   </td>
                 ))}

@@ -1,9 +1,9 @@
 import { useCallback, useMemo } from "react";
 import { bucketMetrics, buckets as projectBuckets, type Buckets } from "../data/project";
 import { fleetBuckets, pooledBucket } from "../data/fleet";
-import type { Metrics, Pooled } from "../data/types";
-import type { DateRange } from "../lib/dates";
-import { chartWindow, previousRange } from "../lib/ranges";
+import type { FleetFile, Metrics, Pooled } from "../data/types";
+import type { Cadence, DateRange } from "../lib/dates";
+import { chartWindow, previousRange, type RangeContext } from "../lib/ranges";
 import type { MetricId } from "../metrics/registry";
 import { useFleet } from "./context";
 
@@ -43,6 +43,23 @@ function alignTo(labels: string[], pb: Buckets) {
     });
 }
 
+/** The fleet's weeks or months over the chart window (at least a year back to the range end). */
+function trendWindow(fleet: FleetFile, cadence: Cadence, range: DateRange, ctx: RangeContext) {
+  const b = fleetBuckets(fleet, cadence);
+  const window = chartWindow(range, ctx);
+  const indices = b.ranges.flatMap((r, i) => (r.end >= window.start && r.start <= window.end ? [i] : []));
+  return { b, indices };
+}
+
+/** The periods the trend lines cover: label and dates. */
+export function useFleetTrendPeriods(): Array<{ label: string; range: DateRange }> {
+  const { fleet, cadence, range, rangeContext } = useFleet();
+  return useMemo(() => {
+    const { b, indices } = trendWindow(fleet, cadence, range, rangeContext);
+    return indices.map((i) => ({ label: b.labels[i]!, range: b.ranges[i]! }));
+  }, [fleet, cadence, range, rangeContext]);
+}
+
 /**
  * A headline's values over the chart window (at least a year back to the range end): a project's
  * (by key) or the fleet row's (null).
@@ -50,9 +67,7 @@ function alignTo(labels: string[], pb: Buckets) {
 export function useFleetTrend(): (key: string | null, id: MetricId) => Array<number | null> {
   const { fleet, projects, cadence, range, rangeContext } = useFleet();
   const trend = useMemo(() => {
-    const b = fleetBuckets(fleet, cadence);
-    const window = chartWindow(range, rangeContext);
-    const indices = b.ranges.flatMap((r, i) => (r.end >= window.start && r.start <= window.end ? [i] : []));
+    const { b, indices } = trendWindow(fleet, cadence, range, rangeContext);
     const labels = indices.map((i) => b.labels[i]!);
     const perProject: Record<string, { pick: ReturnType<typeof alignTo>; series: Buckets["series"] }> = {};
     for (const [key, p] of Object.entries(projects)) {

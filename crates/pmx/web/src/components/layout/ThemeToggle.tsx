@@ -9,6 +9,7 @@ export function ThemeToggle() {
     <button
       type="button"
       className={styles.themeToggle}
+      data-noprint
       onClick={toggle}
       aria-label={`Switch to ${next} mode`}
       title={`Switch to ${next} mode`}

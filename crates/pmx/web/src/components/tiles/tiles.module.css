@@ -84,3 +84,27 @@
 .doc:hover {
   color: var(--accent);
 }
+
+/* PDF (A4 portrait): six compact boxes a row. */
+:global(html.printing) .grid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+:global(html.printing) .tile {
+  min-height: 0;
+  padding: 6px 8px;
+}
+:global(html.printing) .label,
+:global(html.printing) .note {
+  font-size: 9.5px;
+  line-height: 1.35;
+}
+:global(html.printing) .value {
+  font-size: 17px;
+  margin-top: 1px;
+}
+:global(html.printing) .empty .value,
+:global(html.printing) .notMeasured .value {
+  font-size: 12px;
+  padding-top: 2px;
+}

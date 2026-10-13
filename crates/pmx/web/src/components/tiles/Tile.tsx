@@ -35,6 +35,7 @@ export function Tile({ label, state = "value", value, note, help, doc, lowN }: T
       {docUrl && (
         <a
           className={styles.doc}
+          data-noprint
           href={docUrl}
           target="_blank"
           rel="noopener noreferrer"

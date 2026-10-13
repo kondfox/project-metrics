@@ -100,3 +100,37 @@ select {
   font: inherit;
   color: inherit;
 }
+
+/* PDF export (lib/export/print.ts): light, at A4-portrait width, without the on-screen controls. */
+/* One width on screen and on paper (A4 portrait less margins: 190mm ≈ 718px), so charts drawn for
+   the screen fit the page. */
+html.printing #root {
+  width: 718px;
+  max-width: none;
+}
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm;
+  }
+  body {
+    background: #fff;
+  }
+  /* Keep the colors that carry meaning (bands, role badges, chart fills): browsers drop backgrounds. */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  [data-noprint] {
+    display: none !important;
+  }
+  /* Keep a chart, a box or a table row whole; sections may break between them. */
+  figure,
+  [role="group"],
+  tr {
+    break-inside: avoid;
+  }
+  h2 {
+    break-after: avoid;
+  }
+}

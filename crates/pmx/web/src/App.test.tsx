@@ -52,6 +52,33 @@ describe("<App>", () => {
     expect(window.location.hash).toBe("#weekly&2026-09-01..2026-09-30");
   });
 
+  it("exports the range's metrics as CSV and every table as XLSX", async () => {
+    const files: Array<{ name: string; blob: Blob }> = [];
+    vi.spyOn(URL, "createObjectURL").mockImplementation((b) => {
+      files.push({ name: "", blob: b as Blob });
+      return "blob:export";
+    });
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      files.at(-1)!.name = this.download;
+    });
+    window.history.replaceState(null, "", "#monthly&2026-09-01..2026-09-30");
+    renderApp(fixtureWithVelocity());
+    await userEvent.click(screen.getByRole("button", { name: "Export ▾" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /^CSV/ }));
+    expect(files[0]!.name).toBe("acme-shop_2026-09-01_2026-09-30.csv");
+    const csv = await files[0]!.blob.text();
+    // (Blob.text() drops the BOM; toCsv writes it, tested in lib/export.)
+    expect(csv.split("\r\n")[0]).toBe("Project,From,To,Section,Metric,Value,Unit,Events (n),Metric id");
+    expect(csv).toContain("Acme Shop,2026-09-01,2026-09-30,Quality,Quality,");
+    expect(csv).toContain(",FTE (mean over business days),2,FTE,,fte");
+    await userEvent.click(screen.getByRole("button", { name: "Export ▾" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /^Excel/ }));
+    expect(files[1]!.name).toBe("acme-shop_2026-09-01_2026-09-30.xlsx");
+    expect(files[1]!.blob.type).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    vi.restoreAllMocks();
+  });
+
   it("switches between light and dark mode and remembers it", async () => {
     renderApp();
     await userEvent.click(screen.getByRole("button", { name: "Switch to dark mode" }));

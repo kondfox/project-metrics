@@ -27,7 +27,12 @@ export function EChart({ option, height = 240 }: { option: EChartsCoreOption; he
     chart.current = c;
     const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => c.resize());
     ro?.observe(el.current);
+    // Printing lays the page out again at paper width: redraw for it.
+    const print = window.matchMedia?.("print");
+    const onPrint = () => c.resize();
+    print?.addEventListener("change", onPrint);
     return () => {
+      print?.removeEventListener("change", onPrint);
       ro?.disconnect();
       c.dispose();
       chart.current = null;

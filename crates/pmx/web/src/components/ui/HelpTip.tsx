@@ -17,6 +17,7 @@ export function HelpTip({ children }: { children: ReactNode }) {
     <>
       <span
         className={styles.help}
+        data-noprint
         tabIndex={0}
         role="button"
         aria-label="what this means"
