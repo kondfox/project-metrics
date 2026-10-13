@@ -131,11 +131,13 @@ function fleetCell(h: Headline, pooled: Pooled | null): CellState {
   return cellOf(h, pooled, fed, "no project measures it");
 }
 
-/** One row per project, then the fleet row; every project links to its own dashboard. */
+/** The fleet row, then one row per project by name; every project links to its own dashboard. */
 export function FleetTable() {
   const { fleet, projects } = useFleet();
   const { pooled, rows, previous } = useFleetRange();
   const trend = useFleetTrend();
+  // The fleet row first, then the projects by name.
+  const byName = [...fleet.projects].sort((a, b) => a.name.localeCompare(b.name));
   const total = fleet.projects.length;
   return (
     <div className={tableStyles.wrap}>
@@ -152,7 +154,21 @@ export function FleetTable() {
           </tr>
         </thead>
         <tbody>
-          {fleet.projects.map((p) => {
+          <tr className={styles.fleetRow}>
+            <th scope="row">Fleet</th>
+            {HEADLINES.map((h) => (
+              <td key={h.id} className={tableStyles.right} title={h.pooling}>
+                <Cell
+                  h={h}
+                  c={fleetCell(h, pooled)}
+                  trend={trend(null, h.id)}
+                  was={previous?.pooled?.values[h.id] ?? null}
+                  extra={pooled && <Coverage pooled={pooled} h={h} total={total} />}
+                />
+              </td>
+            ))}
+          </tr>
+          {byName.map((p) => {
             const project = projects[p.key]!;
             return (
               <tr key={p.key}>
@@ -178,20 +194,6 @@ export function FleetTable() {
               </tr>
             );
           })}
-          <tr className={styles.fleetRow}>
-            <th scope="row">Fleet</th>
-            {HEADLINES.map((h) => (
-              <td key={h.id} className={tableStyles.right} title={h.pooling}>
-                <Cell
-                  h={h}
-                  c={fleetCell(h, pooled)}
-                  trend={trend(null, h.id)}
-                  was={previous?.pooled?.values[h.id] ?? null}
-                  extra={pooled && <Coverage pooled={pooled} h={h} total={total} />}
-                />
-              </td>
-            ))}
-          </tr>
         </tbody>
         <caption>
           <BandCounts rows={rows} />
@@ -217,8 +219,8 @@ function BandCounts({ rows }: { rows: Record<string, Metrics | null> }) {
   });
   return (
     <span className={styles.bands}>
-      Projects by band · {parts.join(" · ")} · ~ point in time or FTE unknown · hover a column for how the
-      fleet row is pooled
+      Projects by band · {parts.join(" · ")} · ▲▼ change against the period before · ~ point in time or FTE
+      unknown · hover a column for how the fleet row is pooled
     </span>
   );
 }

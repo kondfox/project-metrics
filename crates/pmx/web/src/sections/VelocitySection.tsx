@@ -1,4 +1,5 @@
-import { ChartGrid, TimeSeriesChart } from "../components/charts/TimeSeriesChart";
+import { useMemo } from "react";
+import { ChartGrid, TimeSeriesChart, type MetricSeries } from "../components/charts/TimeSeriesChart";
 import { PackagesTable } from "../components/tables/PackagesTable";
 import { PointsTable } from "../components/tables/PointsTable";
 import { MetricTile } from "../components/tiles/MetricTile";
@@ -6,12 +7,11 @@ import { NotMeasuredTile } from "../components/tiles/NotMeasuredTile";
 import { Tile, TileGrid } from "../components/tiles/Tile";
 import { Section } from "../components/ui/Section";
 import { bucketMetrics } from "../data/project";
-import { formatDate } from "../lib/dates";
+import { formatDate, type DateRange } from "../lib/dates";
 import { formatNumber } from "../lib/format";
 import { useDashboard, useMeasured } from "../state/hooks";
 import { fteOver, velocityNote } from "../metrics/velocity";
-import type { DateRange } from "../lib/dates";
-import type { VelocityDetail, VelocityOptions } from "../data/types";
+import type { Package, VelocityDetail, VelocityOptions } from "../data/types";
 
 /** How the packages were grouped (spec §4), and where PR data was missing. */
 function grouping(h: VelocityDetail["health"]): string {
@@ -32,6 +32,7 @@ function FteTile({ options, range }: { options: VelocityOptions; range: DateRang
     return (
       <Tile
         label="FTE"
+        doc="§10.2"
         state="notMeasured"
         note="FTE unknown ([fte] in pmx.toml): Velocity uses active engineer-days"
       />
@@ -40,6 +41,7 @@ function FteTile({ options, range }: { options: VelocityOptions; range: DateRang
     return (
       <Tile
         label="FTE"
+        doc="§10.2"
         state="empty"
         note="no FTE for some business days: Velocity uses active engineer-days"
       />
@@ -47,9 +49,67 @@ function FteTile({ options, range }: { options: VelocityOptions; range: DateRang
   return (
     <Tile
       label="FTE"
+      doc="§10.2"
       value={formatNumber(f.mean, 1)}
       note={`${formatNumber(f.fteDays, 1)} FTE-days over ${formatNumber(f.businessDays)} business days`}
     />
+  );
+}
+
+/** The rubric's sizes, smallest first (sum of the six axes → size, velocity-metrics.md §4). */
+const SIZES = ["XS", "S", "M", "L", "XL", "XXL"] as const;
+
+/** One stacked bar per size: how many packages of that size each week or month delivered. */
+function sizeSeries(packages: Package[]): MetricSeries[] {
+  const count = (size: string | null) => (bucket: DateRange) => {
+    const [start, end] = [formatDate(bucket.start), formatDate(bucket.end)];
+    return packages.filter((p) => p.size === size && p.date >= start && p.date <= end).length;
+  };
+  const series: MetricSeries[] = SIZES.map((size, k) => ({
+    label: size,
+    of: count(size),
+    kind: "bar",
+    stack: "size",
+    color: k,
+  }));
+  if (packages.some((p) => p.size == null))
+    series.push({ label: "not scored", of: count(null), kind: "bar", stack: "size", color: 6 });
+  return series;
+}
+
+/** Throughput from git, context only (never headline targets, synthesis.md §8): shown even without Velocity. */
+function ActivityTiles() {
+  return (
+    <>
+      <MetricTile id="added" />
+      <MetricTile id="commit_med" note={(m) => `median lines · p90 ${formatNumber(m.values.commit_p90)}`} />
+      <MetricTile
+        id="commits_per_dev_med"
+        note={(m) => `median of ${formatNumber(m.n.commits_per_dev_med)} people`}
+      />
+    </>
+  );
+}
+
+function ActivityCharts() {
+  return (
+    <>
+      <TimeSeriesChart
+        title="Commits and lines added"
+        series={[
+          { metric: "commits", kind: "bar" },
+          { metric: "added", axis: 1 },
+        ]}
+      />
+      <TimeSeriesChart
+        title="Commit size (lines)"
+        hint="added + deleted source lines per commit"
+        series={[
+          { metric: "commit_med", label: "Median" },
+          { metric: "commit_p90", label: "p90" },
+        ]}
+      />
+    </>
   );
 }
 
@@ -58,12 +118,17 @@ export function VelocitySection() {
   const { project, leads, range } = useDashboard();
   const measured = useMeasured();
   const v = project.velocity;
+  const bySize = useMemo(() => (v ? sizeSeries(v.packages) : []), [v]);
   if (!v || !measured("velocity")) {
     return (
       <Section title="Velocity" id="velocity">
         <TileGrid>
           <NotMeasuredTile id="velocity" />
+          <ActivityTiles />
         </TileGrid>
+        <ChartGrid>
+          <ActivityCharts />
+        </ChartGrid>
       </Section>
     );
   }
@@ -99,6 +164,7 @@ export function VelocitySection() {
         <MetricTile id="points_per_commit" />
         <MetricTile id="points_per_kloc" />
         <MetricTile id="verification_debt_pts" />
+        <ActivityTiles />
       </TileGrid>
       <ChartGrid>
         <TimeSeriesChart
@@ -118,6 +184,21 @@ export function VelocitySection() {
             { metric: "points_per_kloc", label: "Points / KLOC" },
             { metric: "points_per_commit", label: "Points / commit", axis: 1 },
           ]}
+        />
+        {v.options.fte.length > 0 && (
+          <TimeSeriesChart
+            title="FTE"
+            hint="mean FTE over each period's business days: the capacity Velocity is divided by"
+            decimals={1}
+            series={[{ label: "FTE", of: (bucket) => fteOver(v.options, bucket)?.mean ?? null }]}
+          />
+        )}
+        <ActivityCharts />
+        <TimeSeriesChart
+          title="Work packages by size"
+          hint="packages delivered per period, by the rubric's size (XS 1 point … XXL 13)"
+          unit="count"
+          series={bySize}
         />
       </ChartGrid>
       <PackagesTable packages={inRange} />

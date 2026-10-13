@@ -1,23 +1,23 @@
+/* One line (wrapping only when narrow): it sticks to the top, so it stays short. */
 .header {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 20px;
-  margin-bottom: 12px;
+  align-items: center;
+  gap: 6px 16px;
 }
 .header h1 {
-  font-size: 22px;
+  font-size: 18px;
   margin: 0;
 }
 .sub {
   color: var(--muted);
+  font-size: 12px;
 }
 .controls {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  margin: 8px 0 4px;
 }
 .controls select,
 .controls input {
@@ -25,10 +25,6 @@
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 5px 8px;
-}
-.legend {
-  color: var(--muted);
-  font-size: 12px;
 }
 .footer {
   color: var(--muted);
@@ -40,11 +36,33 @@
   font-size: 11px;
 }
 .back {
-  flex-basis: 100%;
   color: var(--accent);
   text-decoration: none;
   font-size: 13px;
 }
 .back:hover {
   text-decoration: underline;
+}
+/* Bleeds over #root's padding so scrolled content doesn't show beside it. */
+.sticky {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  margin: -16px -16px 0;
+  padding: 10px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+.themeToggle {
+  margin-left: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 9px;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1.4;
+}
+.themeToggle:hover {
+  border-color: var(--accent);
 }

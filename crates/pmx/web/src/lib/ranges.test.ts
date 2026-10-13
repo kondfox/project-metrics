@@ -12,6 +12,7 @@ describe("ranges", () => {
   it("resolves presets relative to as_of", () => {
     expect(fmt(presetRange("month", ctx))).toEqual(["2026-09-01", "2026-09-30"]);
     expect(fmt(presetRange("week", ctx))).toEqual(["2026-09-28", "2026-10-04"]);
+    expect(fmt(presetRange("30d", ctx))).toEqual(["2026-09-10", "2026-10-09"]);
     expect(fmt(presetRange("3m", ctx))).toEqual(["2026-07-01", "2026-09-30"]);
     expect(fmt(presetRange("all", ctx))).toEqual(["2025-09-01", "2026-10-09"]);
     expect(presetRange("custom", ctx)).toBeNull();

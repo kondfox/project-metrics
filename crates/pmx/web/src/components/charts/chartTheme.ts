@@ -23,15 +23,19 @@ export function readChartTheme(el: Element = document.documentElement): ChartThe
   };
 }
 
-/** The theme, refreshed when the OS switches between light and dark. */
+/** The theme, refreshed when the OS or the viewer (`data-theme`, ThemeToggle) switches modes. */
 export function useChartTheme(): ChartTheme {
   const [theme, setTheme] = useState(readChartTheme);
   useEffect(() => {
-    const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
-    if (!mq) return;
     const update = () => setTheme(readChartTheme());
-    mq.addEventListener("change", update);
-    return () => mq.removeEventListener("change", update);
+    const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
+    mq?.addEventListener("change", update);
+    const mo = new MutationObserver(update);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => {
+      mq?.removeEventListener("change", update);
+      mo.disconnect();
+    };
   }, []);
   return theme;
 }

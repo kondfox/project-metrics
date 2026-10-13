@@ -35,6 +35,15 @@ describe("<FleetRoot>", () => {
     expect(screen.getByText(/Collected before 2026-09-30/)).toHaveTextContent("Acme CRM");
   });
 
+  it("puts the fleet row first, then the projects by name", () => {
+    renderFleet();
+    const names = screen
+      .getAllByRole("row")
+      .slice(1)
+      .map((r) => r.querySelector("th")?.textContent);
+    expect(names.map((n) => n?.replace(/as of.*/, ""))).toEqual(["Fleet", "Acme CRM", "Acme Shop"]);
+  });
+
   it("draws a trend line under each value", () => {
     window.history.replaceState(null, "", "#monthly&2026-09-01..2026-09-30");
     renderFleet();

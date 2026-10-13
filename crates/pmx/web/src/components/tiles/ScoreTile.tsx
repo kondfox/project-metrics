@@ -15,14 +15,17 @@ export function ScoreTile(props: {
   marker?: string;
 }) {
   const r = useRangeMetrics();
-  const label = props.label ?? metricDef(props.id).label;
-  if (!r) return <Tile label={label} state="empty" note="needs the metrics engine for this range" />;
+  const def = metricDef(props.id);
+  const label = props.label ?? def.label;
+  if (!r)
+    return <Tile label={label} doc={def.spec} state="empty" note="needs the metrics engine for this range" />;
   const v = r.metrics.values[props.id] ?? null;
   const note = props.note(r.metrics);
-  if (v == null) return <Tile label={label} state="empty" note={note} />;
+  if (v == null) return <Tile label={label} doc={def.spec} state="empty" note={note} />;
   return (
     <Tile
       label={label}
+      doc={def.spec}
       value={
         <>
           {props.marker}

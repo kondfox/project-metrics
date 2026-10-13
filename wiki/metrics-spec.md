@@ -54,7 +54,9 @@ deviates from the prototype it says so with **⟂ change vs prototype**.
 - **Small samples.** A week often has few events (a 3-person team may merge 5 PRs). Every ratio carries
   its denominator, and a bucket with fewer than **10** denominator events (commits, PRs) is flagged
   *low-n* and drawn hollow or faded rather than hidden. Weekly sparklines may add a trailing
-  4-week line to smooth noise. The threshold is a calibration knob.
+  4-week line to smooth noise. The threshold is a calibration knob. Metrics whose denominator is people
+  (multi-stack %, breadth index, techs per dev) are never flagged: a project rarely has 10 developers
+  (decided 2026-10-13, plan D52).
 - **No data ≠ zero.** A bucket with no denominator (no commits, no added lines, no PRs) yields `null`,
   never `0`. This matters for scores: e.g. 0% rework would score badly under the band rule (§3.1).
   **⟂ change vs prototype** (writes `0`).
@@ -254,7 +256,9 @@ only month-ends; `since` limits how far back trees are scanned.
 2. **Diff extraction.** Each package's diff, excluding generated paths (§1.4 + `Pods/`, `__generated__/`,
    `*.min.js`; migrations stay in, D39), capped at **24,000 bytes** (flag `truncated`).
 3. **LLM scoring** against the six-axis rubric → R1–R6 (0–3 each); sum → points
-   `0–2 XS 1 · 3–5 S 2 · 6–8 M 3 · 9–11 L 5 · 12–14 XL 8 · 15–18 XXL 13`. Contract: §8.3.
+   `0–2 XS 1 · 3–5 S 2 · 6–8 M 3 · 9–11 L 5 · 12–14 XL 8 · 15–18 XXL 13`. How each axis is scored (the
+   `six-axis@3` questions, anchors, level rules and worked examples): [velocity-metrics.md](velocity-metrics.md).
+   Classifier contract: §10.3.
 4. **Velocity = Σ points ÷ (FTE × business days in window)** — points per FTE-day. Business days = Mon–Fri
    (holidays not yet subtracted). If FTE is unknown: fallback `Σ points ÷ active engineer-days`
    (distinct person-days with a commit), shown with a `~` marker.

@@ -30,8 +30,10 @@
   color-scheme: light;
 }
 
+/* Dark: the system's mode unless the viewer chose light; or the viewer chose dark (ThemeToggle).
+   The two blocks hold the same values. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #141413;
     --panel: #1d1d1b;
     --ink: #ecebe6;
@@ -52,6 +54,27 @@
     --series-7: #9c9b95;
     color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #141413;
+  --panel: #1d1d1b;
+  --ink: #ecebe6;
+  --muted: #9c9b95;
+  --line: #2f2e2b;
+  --faint: #262624;
+  --accent: #6d9cf0;
+  --on-accent: #10131a;
+  --good: #4fbf8a;
+  --warn: #e0a64a;
+  --bad: #ef7b65;
+  --series-1: #6d9cf0;
+  --series-2: #f0a06a;
+  --series-3: #4fbf8a;
+  --series-4: #b48ef0;
+  --series-5: #ef7b65;
+  --series-6: #6fc3d3;
+  --series-7: #9c9b95;
+  color-scheme: dark;
 }
 
 * {

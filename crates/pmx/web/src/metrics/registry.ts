@@ -14,6 +14,8 @@ export interface MetricDef {
   description?: string;
   /** What the denominator `n` counts, for the low-n note. */
   nCounts?: string;
+  /** Never flagged low-n: it counts people, and a team is rarely 10 or more (spec §1.1). */
+  noLowN?: boolean;
   /** Spec section. */
   spec: string;
 }
@@ -66,6 +68,7 @@ export const METRICS = {
     decimals: 1,
     description: "median over people",
     nCounts: "people",
+    noLowN: true,
     spec: "§2",
   },
   active_devs: {
@@ -79,6 +82,7 @@ export const METRICS = {
     unit: "percent",
     description: "≥ 40 lines in 2+ roles",
     nCounts: "active devs",
+    noLowN: true,
     spec: "§5",
   },
   breadth_index: {
@@ -87,6 +91,7 @@ export const METRICS = {
     decimals: 1,
     description: "mean normalized entropy × 100",
     nCounts: "active devs",
+    noLowN: true,
     spec: "§5",
   },
   techs_per_dev: {
@@ -95,6 +100,7 @@ export const METRICS = {
     decimals: 2,
     description: "technologies with ≥ 40 lines",
     nCounts: "active devs",
+    noLowN: true,
     spec: "§5",
   },
   ai_assist_commit_pct: {
@@ -260,6 +266,19 @@ const ROLE_LABELS: Record<Role, string> = {
 };
 
 export const roleLabel = (r: Role): string => ROLE_LABELS[r];
+
+/** Each role keeps one color everywhere (an index into the `--series-*` palette). */
+const ROLE_COLORS: Record<Role, number> = {
+  frontend: 0,
+  backend: 1,
+  mobile: 2,
+  qa: 3,
+  infra: 4,
+  data: 5,
+  docs: 6,
+};
+
+export const roleColor = (r: Role): number => ROLE_COLORS[r];
 
 export function metricDef(id: MetricId): MetricDef {
   if (id.startsWith("mix_")) {

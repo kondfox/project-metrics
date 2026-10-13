@@ -1,4 +1,6 @@
 import { Controls } from "../components/layout/Controls";
+import { StickyTop } from "../components/layout/StickyTop";
+import { ThemeToggle } from "../components/layout/ThemeToggle";
 import { Banner } from "../components/ui/Banner";
 import { Section } from "../components/ui/Section";
 import layout from "../components/layout/layout.module.css";
@@ -11,10 +13,12 @@ function FleetHeader() {
   return (
     <header className={layout.header}>
       <h1>{fleet.name}</h1>
+      <Controls />
       <span className={layout.sub}>
-        fleet of {n} project{n === 1 ? "" : "s"} · as of {fleet.as_of}
-        {fleet.partial_month && " (month in progress)"} · since {fleet.range_start}
+        {n} project{n === 1 ? "" : "s"} · as of {fleet.as_of}
+        {fleet.partial_month && " (month in progress)"}
       </span>
+      <ThemeToggle />
     </header>
   );
 }
@@ -25,8 +29,7 @@ function FleetNotices() {
   return (
     <>
       <Banner>
-        The fleet view is for noticing where to look, not for concluding: open a project for the full picture
-        (fleet-vision.md).
+        The fleet view is for noticing where to look, not for concluding: open a project for the full picture.
       </Banner>
       {stale.length > 0 && (
         <Banner tone="warn">
@@ -53,6 +56,7 @@ function FleetFooter() {
           {p.velocity_basis && ` · Velocity scored by ${p.velocity_basis}`}
         </div>
       ))}
+      <div>Measured since {fleet.range_start}</div>
       <div>Generated {fleet.generated_at} by pmx · no per-person data on this page</div>
     </footer>
   );
@@ -62,9 +66,10 @@ function FleetFooter() {
 export function FleetApp() {
   return (
     <>
-      <FleetHeader />
+      <StickyTop>
+        <FleetHeader />
+      </StickyTop>
       <FleetNotices />
-      <Controls subject="table" fleet />
       <Section title="Headlines">
         <FleetTable />
       </Section>

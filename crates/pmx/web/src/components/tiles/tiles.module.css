@@ -61,3 +61,26 @@
 .jump:focus-visible::after {
   outline: 2px solid var(--accent);
 }
+
+/* "How it's measured": the metric's section of the spec, in the tile's corner (above a linked tile's
+   stretched button). */
+.tile {
+  position: relative;
+}
+.doc {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 1;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: none;
+  opacity: 0.6;
+}
+.tile:hover .doc,
+.doc:focus-visible {
+  opacity: 1;
+}
+.doc:hover {
+  color: var(--accent);
+}

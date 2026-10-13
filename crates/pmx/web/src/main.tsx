@@ -4,6 +4,7 @@ import { App } from "./App";
 import { loadPageData } from "./data/boot";
 import { loadEngine, loadFleetEngine } from "./data/engine";
 import { FleetRoot } from "./fleet/FleetRoot";
+import { applyTheme, storedTheme } from "./lib/theme";
 import { DashboardProvider } from "./state/DashboardProvider";
 import "./styles/theme.css";
 
@@ -18,6 +19,7 @@ async function orNull<T>(p: Promise<T | null>): Promise<T | null> {
 }
 
 async function main() {
+  applyTheme(storedTheme());
   const root = createRoot(document.getElementById("root")!);
   try {
     const data = await loadPageData();

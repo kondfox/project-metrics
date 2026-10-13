@@ -1,9 +1,8 @@
-import { Controls } from "./components/layout/Controls";
 import { Footer } from "./components/layout/Footer";
 import { Header } from "./components/layout/Header";
 import { Notices } from "./components/layout/Notices";
+import { StickyTop } from "./components/layout/StickyTop";
 import { Banner } from "./components/ui/Banner";
-import { ActivitySection } from "./sections/ActivitySection";
 import { AiSection } from "./sections/AiSection";
 import { CodeHealthSection } from "./sections/CodeHealthSection";
 import { SecuritySection } from "./sections/SecuritySection";
@@ -19,9 +18,10 @@ export function App() {
   const hasRange = useRangeMetrics() != null;
   return (
     <>
-      <Header />
+      <StickyTop>
+        <Header />
+      </StickyTop>
       <Notices />
-      <Controls />
       {hasRange ? (
         <>
           <HeadlineSection />
@@ -31,7 +31,6 @@ export function App() {
           <MultiStackSection />
           <AiSection />
           <ReviewSection />
-          <ActivitySection />
           <CodeHealthSection />
         </>
       ) : (

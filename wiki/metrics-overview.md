@@ -34,12 +34,11 @@ Exact definitions, formulas and inputs: **[metrics-spec.md](metrics-spec.md)**. 
 
 | Area | Panels |
 |---|---|
-| Activity | commits, lines added, commit size (median/p90), commits per dev, active devs, stack mix |
 | Quality | rework %, tests/docs shipped with code, duplication %, complexity/KLOC (trend only), hotspots |
-| Velocity | points per FTE-day per week/month; points/commit, points/KLOC |
+| Velocity | points per FTE-day per week/month; points/commit, points/KLOC; FTE; packages by size; commits and lines added, commit size (median/p90), commits per dev (context) |
 | AI | AI-assisted commits/lines %, AI vs human comparison (size, tests, docs) over 12 months |
 | Security | open dependency vulns by severity over time; own-code SAST findings (trend only); new/fixed findings, live secrets, suppressions |
-| Flow & people | merged PRs, peer review %, PR cycle time, review wait, PR size (GitHub), mentoring pairs; multi-stack %, breadth index, techs per dev |
+| Flow & people | merged PRs, peer review %, PR cycle time, review wait, PR size (GitHub), mentoring pairs; multi-stack %, breadth index, techs per dev, active devs, stack mix |
 
 ## Where the data comes from
 **git** (all flow metrics) · **scc / jscpd** (complexity, duplication) · **OSV-Scanner / gitleaks /

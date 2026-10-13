@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { nOf, seriesOf } from "../../data/project";
+import type { DateRange } from "../../lib/dates";
 import { metricDef, type MetricId } from "../../metrics/registry";
 import { useChartBuckets, useLowN } from "../../state/hooks";
 import { useChartTheme } from "./chartTheme";
@@ -7,10 +8,12 @@ import { EChart } from "./EChart";
 import { buildTimeSeriesOption, type SeriesSpec } from "./timeSeriesOption";
 import styles from "./charts.module.css";
 
-export interface MetricSeries extends Omit<SeriesSpec, "values" | "n" | "label"> {
-  metric: MetricId;
-  label?: string;
-}
+export type MetricSeries = Omit<SeriesSpec, "values" | "n" | "label"> &
+  (
+    | { metric: MetricId; label?: string }
+    /** A value the dashboard works out per bucket (an input such as FTE, not a collected metric). */
+    | { label: string; of: (bucket: DateRange) => number | null }
+  );
 
 /** A chart of metrics over the selected cadence's buckets, declared by metric id. */
 export function TimeSeriesChart(props: {
@@ -38,12 +41,16 @@ export function TimeSeriesChart(props: {
       decimals,
       band,
       max,
-      series: series.map(({ metric, label, ...rest }) => ({
-        ...rest,
-        label: label ?? metricDef(metric).label,
-        values: pick(seriesOf(buckets, metric)),
-        n: pick(nOf(buckets, metric)),
-      })),
+      series: series.map((s) =>
+        "of" in s
+          ? { ...s, values: indices.map((i) => s.of(buckets.ranges[i]!)) }
+          : {
+              ...s,
+              label: s.label ?? metricDef(s.metric).label,
+              values: pick(seriesOf(buckets, s.metric)),
+              n: metricDef(s.metric).noLowN ? undefined : pick(nOf(buckets, s.metric)),
+            },
+      ),
     });
   }, [buckets, indices, inRange, isLowN, theme, series, unit, decimals, band, max]);
   return (

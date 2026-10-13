@@ -2,8 +2,11 @@
 .table th {
   white-space: nowrap;
 }
+.fleetRow td,
+.fleetRow th {
+  border-bottom: 2px solid var(--line);
+}
 .fleetRow td {
-  border-top: 2px solid var(--line);
   font-weight: 600;
 }
 .muted {

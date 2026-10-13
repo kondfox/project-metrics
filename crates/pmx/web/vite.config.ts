@@ -45,6 +45,8 @@ export default defineConfig(({ command }) => ({
   base: "./",
   // `npm run dev` serves fictional demo data from dev-data/ (`npm run dev-data` makes it).
   publicDir: command === "serve" ? "dev-data" : false,
+  // Tests read wiki/metrics-spec.md to check the dashboard's links into it (src/lib/docs.test.ts).
+  server: { fs: { allow: [".", "../../../wiki"] } },
   build: {
     target: "es2022",
     cssCodeSplit: false,

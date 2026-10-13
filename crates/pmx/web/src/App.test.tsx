@@ -29,8 +29,13 @@ describe("<App>", () => {
     const quality = screen.getByRole("group", { name: "Quality" });
     expect(quality).toHaveTextContent("82");
     expect(within(quality).getByLabelText("band B")).toBeInTheDocument();
+    expect(within(quality).getByRole("link", { name: "How Quality is measured" })).toHaveAttribute(
+      "href",
+      expect.stringMatching(/wiki\/metrics-spec\.md#3-quality-/),
+    );
     expect(screen.getAllByRole("group", { name: "Rework" })[0]).toHaveTextContent("18.4%");
-    expect(screen.getAllByRole("group", { name: "Multi-stack devs" })[0]).toHaveTextContent("low n · 4");
+    // People counts are never flagged low-n: a team rarely has 10 developers.
+    expect(screen.getAllByRole("group", { name: "Multi-stack devs" })[0]).not.toHaveTextContent("low n");
     expect(screen.getAllByRole("group", { name: "Security" })[0]).toHaveTextContent("not measured");
     expect(window.location.hash).toBe("#weekly&2026-09-01..2026-09-30");
   });
@@ -47,12 +52,34 @@ describe("<App>", () => {
     expect(window.location.hash).toBe("#weekly&2026-09-01..2026-09-30");
   });
 
-  it("shows people only in the lead's private view", () => {
+  it("switches between light and dark mode and remembers it", async () => {
+    renderApp();
+    await userEvent.click(screen.getByRole("button", { name: "Switch to dark mode" }));
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem("pmx.theme")).toBe("dark");
+    await userEvent.click(screen.getByRole("button", { name: "Switch to light mode" }));
+    expect(document.documentElement.dataset.theme).toBe("light");
+    localStorage.removeItem("pmx.theme");
+    delete document.documentElement.dataset.theme;
+  });
+
+  it("shows people only in the lead's private view", async () => {
     const { unmount } = renderApp();
     expect(screen.queryByRole("table", { name: "Multi-stack leaders" })).not.toBeInTheDocument();
     unmount();
     renderApp(fixtureProject(), fixtureLeads);
-    expect(screen.getByRole("table", { name: "Multi-stack leaders" })).toHaveTextContent("Jane Doe");
+    const leaders = screen.getByRole("table", { name: "Multi-stack leaders" });
+    expect(leaders).toHaveTextContent("Jane Doe");
+    // Each stack a badge in its role's color.
+    expect(within(leaders).getByText("Backend")).toHaveStyle({ "--role": "var(--series-2)" });
+    await userEvent.hover(within(leaders).getByRole("button", { name: "what this means" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent("How evenly the person's added lines spread");
+    await userEvent.unhover(within(leaders).getByRole("button", { name: "what this means" }));
+    const breadth = screen.getByRole("group", { name: "Breadth index" });
+    await userEvent.hover(within(breadth).getByRole("button", { name: "what this means" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent("The mean of everyone's Breadth");
+    // In alphabetical order (the fixture lists frontend first).
+    expect(within(leaders).getByText("Backend").nextElementSibling).toHaveTextContent("Frontend");
   });
 
   it("switches cadence and keeps it in the URL", async () => {
@@ -111,6 +138,8 @@ describe("<App>", () => {
     expect(screen.getByRole("group", { name: "FTE" })).toHaveTextContent(
       "2.044.0 FTE-days over 22 business days",
     );
+    expect(screen.getByRole("figure", { name: "FTE" })).toBeInTheDocument();
+    expect(screen.getByRole("figure", { name: "Work packages by size" })).toBeInTheDocument();
     const table = screen.getByRole("table", { name: "Work packages" });
     // September only, newest first.
     expect(table).toHaveTextContent("SHOP-42 Order totals");

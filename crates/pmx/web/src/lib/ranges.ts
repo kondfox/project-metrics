@@ -1,6 +1,6 @@
 import { addDays, DAY_MS, monthRange, type DateRange } from "./dates";
 
-export type PresetId = "month" | "week" | "3m" | "6m" | "12m" | "all" | "custom";
+export type PresetId = "month" | "week" | "30d" | "3m" | "6m" | "12m" | "all" | "custom";
 
 export interface RangeContext {
   /** First day measured (`range_start`). */
@@ -13,6 +13,7 @@ export interface RangeContext {
 export const PRESETS: ReadonlyArray<{ id: PresetId; label: string }> = [
   { id: "month", label: "Last complete month" },
   { id: "week", label: "Last complete week" },
+  { id: "30d", label: "Last 30 days" },
   { id: "3m", label: "Last 3 months" },
   { id: "6m", label: "Last 6 months" },
   { id: "12m", label: "Last 12 months" },
@@ -38,6 +39,8 @@ export function presetRange(id: PresetId, ctx: RangeContext): DateRange | null {
       const end = addDays(ctx.asOf, -ctx.asOf.getUTCDay());
       return { start: clampStart(addDays(end, -6), ctx), end };
     }
+    case "30d":
+      return { start: clampStart(addDays(ctx.asOf, -29), ctx), end: ctx.asOf };
     case "3m":
       return lastMonths(3);
     case "6m":
