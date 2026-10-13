@@ -62,3 +62,13 @@
 :global(html.printing) .table .muted {
   white-space: normal;
 }
+/* Column headers sort the projects; the fleet row stays first. */
+.sort {
+  all: unset;
+  cursor: pointer;
+}
+.sort:hover,
+.sort:focus-visible {
+  color: var(--ink);
+  text-decoration: underline;
+}

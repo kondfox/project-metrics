@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Sparkline } from "../components/charts/Sparkline";
 import { formatMetric } from "../components/tiles/formatMetric";
 import { Badge } from "../components/ui/Badge";
@@ -12,6 +12,11 @@ import { useFleet } from "./context";
 import { HEADLINES, projectMeasures, type Headline } from "./headlines";
 import { useFleetRange, useFleetTrend } from "./hooks";
 import styles from "./fleet.module.css";
+
+interface Sort {
+  by: "project" | Headline["id"];
+  dir: "asc" | "desc";
+}
 
 type CellState =
   | { kind: "value"; v: number; approx: boolean }
@@ -136,18 +141,51 @@ export function FleetTable() {
   const { fleet, projects } = useFleet();
   const { pooled, rows, previous } = useFleetRange();
   const trend = useFleetTrend();
-  // The fleet row first, then the projects by name.
-  const byName = [...fleet.projects].sort((a, b) => a.name.localeCompare(b.name));
+  const [sort, setSort] = useState<Sort>({ by: "project", dir: "asc" });
+  // The fleet row always first; the projects in the chosen order, those without a value last.
+  const value = (key: string, h: Headline) =>
+    projectMeasures(projects[key]!, h.input) ? (rows[key]?.values[h.id] ?? null) : null;
+  const sorted = [...fleet.projects].sort((a, b) => {
+    const byName = a.name.localeCompare(b.name);
+    if (sort.by === "project") return sort.dir === "asc" ? byName : -byName;
+    const h = HEADLINES.find((x) => x.id === sort.by)!;
+    const [va, vb] = [value(a.key, h), value(b.key, h)];
+    if (va == null || vb == null) return va == null && vb == null ? byName : va == null ? 1 : -1;
+    return (sort.dir === "asc" ? va - vb : vb - va) || byName;
+  });
+  // A new column starts from its natural order: names A–Z, values highest first.
+  const sortBy = (by: Sort["by"]) =>
+    setSort((s) =>
+      s.by === by
+        ? { by, dir: s.dir === "asc" ? "desc" : "asc" }
+        : { by, dir: by === "project" ? "asc" : "desc" },
+    );
+  const ariaSort = (by: Sort["by"]) =>
+    sort.by === by ? (sort.dir === "asc" ? "ascending" : "descending") : undefined;
+  const arrow = (by: Sort["by"]) => (sort.by === by ? (sort.dir === "asc" ? " ▲" : " ▼") : "");
   const total = fleet.projects.length;
   return (
     <div className={tableStyles.wrap}>
       <table className={`${tableStyles.table} ${styles.table}`} aria-label="Fleet">
         <thead>
           <tr>
-            <th scope="col">Project</th>
+            <th scope="col" aria-sort={ariaSort("project")}>
+              <button type="button" className={styles.sort} onClick={() => sortBy("project")}>
+                Project{arrow("project")}
+              </button>
+            </th>
             {HEADLINES.map((h) => (
-              <th key={h.id} scope="col" className={tableStyles.right} title={`fleet row: ${h.pooling}`}>
-                {h.label}
+              <th
+                key={h.id}
+                scope="col"
+                className={tableStyles.right}
+                title={`fleet row: ${h.pooling}`}
+                aria-sort={ariaSort(h.id)}
+              >
+                <button type="button" className={styles.sort} onClick={() => sortBy(h.id)}>
+                  {h.label}
+                  {arrow(h.id)}
+                </button>
                 {h.context && <span className={styles.small}>context</span>}
               </th>
             ))}
@@ -168,7 +206,7 @@ export function FleetTable() {
               </td>
             ))}
           </tr>
-          {byName.map((p) => {
+          {sorted.map((p) => {
             const project = projects[p.key]!;
             return (
               <tr key={p.key}>

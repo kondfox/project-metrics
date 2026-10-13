@@ -61,6 +61,30 @@ describe("<FleetRoot>", () => {
     vi.restoreAllMocks();
   });
 
+  it("sorts the projects by any column, keeping the fleet row first", async () => {
+    renderFleet();
+    const order = () =>
+      screen
+        .getAllByRole("row")
+        .slice(1)
+        .map((r) => r.querySelector("th")?.textContent?.replace(/as of.*/, ""));
+    const header = (name: string) => screen.getByRole("button", { name: new RegExp(`^${name}`) });
+    await userEvent.click(header("Quality"));
+    expect(order()).toEqual(["Fleet", "Acme Shop", "Acme CRM"]); // 82, 49: highest first
+    expect(header("Quality").closest("th")).toHaveAttribute("aria-sort", "descending");
+    await userEvent.click(header("Quality"));
+    expect(order()).toEqual(["Fleet", "Acme CRM", "Acme Shop"]);
+    // CRM doesn't measure security: last either way.
+    await userEvent.click(header("Security"));
+    expect(order()).toEqual(["Fleet", "Acme Shop", "Acme CRM"]);
+    await userEvent.click(header("Security"));
+    expect(order()).toEqual(["Fleet", "Acme Shop", "Acme CRM"]);
+    await userEvent.click(header("Project"));
+    expect(order()).toEqual(["Fleet", "Acme CRM", "Acme Shop"]);
+    await userEvent.click(header("Project"));
+    expect(order()).toEqual(["Fleet", "Acme Shop", "Acme CRM"]);
+  });
+
   it("draws a trend line under each value", () => {
     window.history.replaceState(null, "", "#monthly&2026-09-01..2026-09-30");
     renderFleet();
