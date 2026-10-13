@@ -271,7 +271,8 @@ only month-ends; `since` limits how far back trees are scanned.
    an unscored package has no Velocity (null), never a partial sum. Commits by bots and externals are in
    no package (§1.3).
 
-Per-person points exist only in the private lead drill-down — never a headline.
+Per-person points exist only in the private lead file (`leads.json`) — never a headline, and since
+2026-10-13 not shown on the dashboard either (plan D58).
 
 ### 4.1 Speed-up: phases and markers (decided 2026-10-13, plan D57)
 

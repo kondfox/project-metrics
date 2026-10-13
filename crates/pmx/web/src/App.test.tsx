@@ -203,11 +203,10 @@ describe("<App>", () => {
     );
   });
 
-  it("shows points by person only in the lead's private view", () => {
+  it("never shows Velocity points by person, even in the lead's private view", () => {
     renderApp(fixtureWithVelocity(), fixtureLeads);
-    const table = screen.getByRole("table", { name: "Points by person" });
-    expect(table).toHaveTextContent("Jane Doe");
-    expect(table).toHaveTextContent("4.5");
+    expect(screen.queryByRole("table", { name: "Points by person" })).not.toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Multi-stack leaders" })).toHaveTextContent("Jane Doe");
   });
 
   it("hides AI series when attribution is off", () => {

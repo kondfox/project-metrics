@@ -1,12 +1,10 @@
 import { useMemo } from "react";
 import { ChartGrid, TimeSeriesChart, type MetricSeries } from "../components/charts/TimeSeriesChart";
 import { PackagesTable } from "../components/tables/PackagesTable";
-import { PointsTable } from "../components/tables/PointsTable";
 import { MetricTile } from "../components/tiles/MetricTile";
 import { NotMeasuredTile } from "../components/tiles/NotMeasuredTile";
 import { Tile, TileGrid } from "../components/tiles/Tile";
 import { Section } from "../components/ui/Section";
-import { bucketMetrics } from "../data/project";
 import { formatDate, type DateRange } from "../lib/dates";
 import { formatNumber } from "../lib/format";
 import { useDashboard, useMeasured } from "../state/hooks";
@@ -118,7 +116,7 @@ function ActivityCharts() {
 
 /** Velocity: six-axis complexity points of delivered work packages per FTE-day (spec §4). */
 export function VelocitySection() {
-  const { project, leads, range } = useDashboard();
+  const { project, range } = useDashboard();
   const measured = useMeasured();
   const v = project.velocity;
   const bySize = useMemo(() => (v ? sizeSeries(v.packages) : []), [v]);
@@ -141,8 +139,6 @@ export function VelocitySection() {
   const unscored = inRange.filter((p) => p.points == null).length;
   const escalated = inRange.filter((p) => p.escalated).length;
   const unsure = inRange.filter((p) => p.low_confidence).length;
-  const label = bucketMetrics(project, range)?.label;
-  const points = leads && label ? leads.points[label] : undefined;
   return (
     <Section title="Velocity" id="velocity">
       <p>
@@ -211,7 +207,6 @@ export function VelocitySection() {
         />
       </ChartGrid>
       <PackagesTable packages={inRange} />
-      {points && <PointsTable points={points} />}
     </Section>
   );
 }
