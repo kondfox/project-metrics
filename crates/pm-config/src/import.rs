@@ -180,6 +180,10 @@ fn import_fte(fte: Option<&Value>, project: &str, notes: &mut Vec<String>) -> Op
         value: None,
         periods: Vec::new(),
         file: None,
+        projects: Vec::new(),
+        min_commits: None,
+        roles: Vec::new(),
+        timesheet: None,
     };
     if let Some(x) = v.as_f64() {
         f.value = Some(x);

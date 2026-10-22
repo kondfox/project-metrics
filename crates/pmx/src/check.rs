@@ -209,6 +209,12 @@ pub fn check(ws: &Workspace, unmapped_threshold: u64) -> Vec<Finding> {
                 )),
             }
         }
+        if fte.source == FteSource::Timesheet && crate::wizard::find_on_path("gcloud").is_none() {
+            out.push(f(
+                Level::Error,
+                "[fte] source = \"timesheet\" reads the export with gcloud, which is not on PATH".to_string(),
+            ));
+        }
     }
 
     let (mut idents, warnings) = gather(ws);

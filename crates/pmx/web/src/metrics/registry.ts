@@ -141,6 +141,14 @@ export const METRICS = {
     nCounts: "work packages",
     spec: "§4",
   },
+  fte: {
+    label: "FTE",
+    unit: "ratio",
+    decimals: 1,
+    description: "mean FTE over the range's business days",
+    noLowN: true,
+    spec: "§10.2",
+  },
   velocity_points: {
     label: "Points delivered",
     unit: "count",

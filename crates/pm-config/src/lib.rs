@@ -228,15 +228,31 @@ pub enum CodeHostKind {
 #[serde(deny_unknown_fields)]
 pub struct Fte {
     pub source: FteSource,
-    /// `static`: one value for every date.
+    /// `static`: one value for every date. `timesheet`: the value where the export has no FTE.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<f64>,
-    /// `static`: dated values instead (an open `to` means until further notice).
+    /// `static`: dated values instead (an open `to` means until further notice). `timesheet`: dated
+    /// values for days the export doesn't cover (e.g. before time was tracked).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub periods: Vec<FtePeriod>,
     /// `file`: a JSON file in the spec §10.2 shape, keyed by project name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
+    /// `timesheet`: the time-tracking project ids whose bookings belong to this project.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projects: Vec<String>,
+    /// `timesheet`: a person with no declared role is a developer from this many commits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_commits: Option<u32>,
+    /// `timesheet`: declared roles; a role wins over the commit count.
+    #[serde(default, rename = "role", skip_serializing_if = "Vec::is_empty")]
+    pub roles: Vec<FteRole>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timesheet: Option<Timesheet>,
+}
+
+impl Fte {
+    pub const DEFAULT_MIN_COMMITS: u32 = 10;
 }
 
 /// Where FTE comes from (spec §10.2).
@@ -245,6 +261,49 @@ pub struct Fte {
 pub enum FteSource {
     Static,
     File,
+    /// Developer hours from a time-tracking export in Google Sheets.
+    Timesheet,
+}
+
+/// A person's declared role from `from` on (spec §10.2): `dev` counts as FTE, anything else is
+/// overhead however much they commit.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FteRole {
+    /// The email in the time-tracking export, or a `[people]` name.
+    pub who: String,
+    pub role: String,
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_date_str")]
+    pub from: Option<NaiveDate>,
+}
+
+/// Where the time-tracking export lives: a Drive folder whose `months` subfolder holds one
+/// spreadsheet per month, each with a `tab` of booking rows (one per person, day and project).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Timesheet {
+    /// The Drive folder id.
+    pub folder: String,
+    /// The subfolder holding the monthly spreadsheets.
+    pub months: String,
+    /// The sheet with the booking rows in each monthly spreadsheet.
+    pub tab: String,
+    pub columns: TimesheetColumns,
+    /// The service account to read as (`gcloud auth print-access-token --impersonate-service-account`).
+    pub impersonate: String,
+    /// The gcloud account that impersonates it; gcloud's active account when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+}
+
+/// Header names of the booking columns. Hours are `h:mm` or a decimal number.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimesheetColumns {
+    pub date: String,
+    pub email: String,
+    pub project: String,
+    pub hours: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -497,6 +556,12 @@ impl Config {
                     return bad("[fte] source = \"static\" needs `value` or `periods`".into());
                 }
                 FteSource::File if f.file.is_none() => return bad("[fte] source = \"file\" needs `file`".into()),
+                FteSource::Timesheet if f.timesheet.is_none() => {
+                    return bad("[fte] source = \"timesheet\" needs an [fte.timesheet] table".into());
+                }
+                FteSource::Timesheet if f.projects.is_empty() => {
+                    return bad("[fte] source = \"timesheet\" needs `projects` (the time-tracking project ids)".into());
+                }
                 _ => {}
             }
         }

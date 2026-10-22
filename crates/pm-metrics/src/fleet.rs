@@ -187,7 +187,24 @@ pub fn pool(members: &[&Member], start: NaiveDate, end: NaiveDate) -> Pooled {
     }
 
     pool_velocity(&mut out, members, &aggs, start, end);
+    pool_fte(&mut out, members, start, end);
     out
+}
+
+/// The fleet's FTE: the projects' mean FTE over the range, summed, only when every project has it
+/// (a partial sum would understate the fleet).
+fn pool_fte(out: &mut Pooled, members: &[&Member], start: NaiveDate, end: NaiveDate) {
+    let fte: Vec<Option<f64>> = members
+        .iter()
+        .map(|m| m.opts.velocity.as_ref().and_then(|v| v.fte_mean(start, end)))
+        .collect();
+    let sum = fte.iter().all(Option::is_some).then(|| fte.iter().flatten().sum());
+    out.values.insert("fte".into(), sum);
+    out.n.insert("fte".into(), None);
+    if sum.is_none() && fte.iter().any(Option::is_some) {
+        out.notes
+            .insert("fte".into(), "some projects have no FTE for this range".into());
+    }
 }
 
 /// Duplication over every project's latest snapshot on or before `end`, or `None` when any
@@ -539,6 +556,21 @@ mod tests {
         let p = pool(&[&a, &plain], aug1, aug31);
         assert_eq!(p.values["velocity"], Some(42.0 / 21.0));
         assert_eq!(p.fed["velocity"], vec!["a"]);
+    }
+
+    #[test]
+    fn fte_is_summed_only_when_every_project_has_it() {
+        let (aug1, aug31) = (d("2026-08-01"), d("2026-08-31"));
+        let a = scored(member("a", 10, 0, 10, 9), "six-axis@2 · x", 42, Some(1.0));
+        let b = scored(member("b", 10, 0, 10, 9), "six-axis@2 · y", 21, Some(2.5));
+        assert_eq!(a.metrics(aug1, aug31).values["fte"], Some(1.0));
+        let p = pool(&[&a, &b], aug1, aug31);
+        assert_eq!(p.values["fte"], Some(3.5), "classifiers may differ; FTE still sums");
+
+        let e = scored(member("e", 10, 0, 10, 9), "six-axis@2 · x", 21, None);
+        let p = pool(&[&a, &e], aug1, aug31);
+        assert_eq!(p.values["fte"], None);
+        assert!(p.notes["fte"].contains("no FTE"));
     }
 
     #[test]

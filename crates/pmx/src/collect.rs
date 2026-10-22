@@ -11,7 +11,7 @@ use anyhow::{Context, Result, anyhow};
 use chrono::{Days as ChronoDays, NaiveDate};
 use pm_classify::{Classifier, TestRules};
 use pm_codehost::Selection;
-use pm_config::{Config, MarkerKind};
+use pm_config::{Config, Fte, FteSource, MarkerKind};
 use pm_config::{Identity, RepoConfig, Workspace};
 use pm_git::{Dialect, Git, LogRange, ReworkCounts};
 use pm_metrics::model::{BuildInput, ProjectInfo, RepoInfo, SnapshotInput};
@@ -358,6 +358,46 @@ pub fn plan_progress(ws: &Workspace, opts: &CollectOptions, plans: &[RepoPlan]) 
     Ok(())
 }
 
+/// Developer FTE per day from the time-tracking export (spec §10.2); commits per person are
+/// counted over the measured range (`days` holds `range_start..=as_of`), so a developer who codes
+/// less for a while stays a developer.
+fn timesheet_fte(
+    ws: &Workspace,
+    fte: &Fte,
+    identity: &Identity,
+    days: &Days,
+    as_of: NaiveDate,
+    p: &Progress,
+) -> Result<Vec<pm_metrics::velocity::FtePeriod>> {
+    let ts = fte
+        .timesheet
+        .as_ref()
+        .context("[fte] source = \"timesheet\" needs [fte.timesheet]")?;
+    let (bookings, stale) = crate::timesheet::load(ts, &fte.projects, &ws.state_dir().join("timesheet.json"))?;
+    if let Some(w) = stale {
+        p.warn(w);
+    }
+    if bookings.is_empty() {
+        p.warn("the time-tracking export has no bookings for [fte] projects: Velocity uses engineer-days");
+        return Ok(Vec::new());
+    }
+    let mut commits: BTreeMap<String, u32> = BTreeMap::new();
+    for day in days.range(..=as_of).map(|(_, d)| d) {
+        for (person, n) in &day.person_commits {
+            *commits.entry(person.clone()).or_default() += n;
+        }
+    }
+    let o = crate::timesheet::developer_fte(&bookings, fte, identity, &commits, as_of);
+    if !o.unmatched.is_empty() {
+        p.warn(format!(
+            "{} people with booked hours have no commits and no [[fte.role]], so they count as overhead: {} (for a developer, add their git email to [people]; otherwise declare their role to silence this)",
+            o.unmatched.len(),
+            o.unmatched.iter().cloned().collect::<Vec<_>>().join(", ")
+        ));
+    }
+    Ok(crate::timesheet::with_fallback(fte, o.periods))
+}
+
 /// Ingest and rework work, re-run after fetching.
 fn update_progress(p: &Progress, plans: &[RepoPlan]) {
     let unknown = plans.iter().any(|r| r.ingest == Work::Unknown);
@@ -702,7 +742,13 @@ pub fn collect(ws: &Workspace, opts: &CollectOptions) -> Result<Collected> {
         )
     });
     let snapshots = snapshots?;
-    let (pulls, velocity) = pulls_velocity?;
+    let (pulls, mut velocity) = pulls_velocity?;
+    if let (Some(v), Some(fte)) = (
+        velocity.as_mut(),
+        config.fte.as_ref().filter(|f| f.source == FteSource::Timesheet),
+    ) {
+        v.options.fte = timesheet_fte(ws, fte, &shared.identity, &days, opts.as_of, p)?;
+    }
     if let Some(v) = &velocity {
         let vdays = pm_metrics::velocity::velocity_days(&v.packages);
         let window: Days = vdays

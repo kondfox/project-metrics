@@ -178,6 +178,7 @@ fn velocity(m: &mut Metrics, agg: &Day, v: &VelocityOptions, start: NaiveDate, e
         None => (agg.person_days as f64, true),
     };
     let per = |d: f64| points.filter(|_| d > 0.0).map(|p| p / d);
+    m.put("fte", v.fte_mean(start, end), None);
     m.put("velocity", per(denominator), packages);
     m.put("velocity_approx", points.map(|_| approx as u8 as f64), None);
     m.put("velocity_points", points, packages);

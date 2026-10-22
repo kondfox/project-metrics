@@ -186,7 +186,6 @@ export function FleetTable() {
                   {h.label}
                   {arrow(h.id)}
                 </button>
-                {h.context && <span className={styles.small}>context</span>}
               </th>
             ))}
           </tr>

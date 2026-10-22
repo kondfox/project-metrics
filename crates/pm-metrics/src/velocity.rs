@@ -186,6 +186,20 @@ impl VelocityOptions {
         }
         Some(sum)
     }
+
+    /// Mean FTE over the business days of `[start, end]` (capped at `as_of`); `None` when a
+    /// business day has no FTE or the range has no business day.
+    pub fn fte_mean(&self, start: NaiveDate, end: NaiveDate) -> Option<f64> {
+        let days = start
+            .iter_days()
+            .take_while(|d| *d <= end.min(self.as_of))
+            .filter(|d| !matches!(d.weekday(), Weekday::Sat | Weekday::Sun))
+            .count();
+        if days == 0 {
+            return None;
+        }
+        self.fte_days(start, end).map(|s| s / days as f64)
+    }
 }
 
 #[cfg(test)]

@@ -12,8 +12,6 @@ export interface Headline {
   score?: boolean;
   /** Point-in-time (a snapshot), marked `~`. */
   snapshot?: boolean;
-  /** Context, not a headline (fleet-vision.md). */
-  context?: boolean;
   /** A rise is good news (its change arrow is green, a fall red); otherwise the arrow stays neutral. */
   higherIsBetter?: boolean;
   /** What the fleet row does with it, for the column's tooltip. */
@@ -65,10 +63,9 @@ export const HEADLINES: readonly Headline[] = [
     pooling: "pooled over projects with code-host data",
   },
   {
-    id: "active_devs",
-    label: "Active devs",
-    context: true,
-    pooling: "summed; people are counted per project",
+    id: "fte",
+    label: "FTE",
+    pooling: "summed, only when every project has FTE for the range",
   },
 ];
 

@@ -73,6 +73,51 @@ During `collect`, the Velocity stage shows how many packages are left. A package
 **unscored**. Any week or month containing one has no Velocity (never a partial sum). Re-run
 `collect` to retry. `pmx collect --no-velocity` skips scoring for one run.
 
+## FTE: who the team is
+
+Velocity divides by FTE-days. The simplest `[fte]` is one number (`source = "static"`, `value = 3.0`),
+which distorts quiet and busy phases alike. If your company books time per project in a spreadsheet
+export on Google Drive (one spreadsheet per month, one row per person, day and project), pmx can read
+the developers' hours from it instead:
+
+```toml
+[fte]
+source = "timesheet"
+projects = ["101", "102"]          # the tracked project ids that belong to this project
+# min_commits = 10                 # developer = this many commits (default 10)
+# Before time was tracked: FTE for the days the export doesn't cover (the export wins elsewhere).
+periods = [{ from = "2025-01-01", to = "2026-06-30", fte = 1.0 }]
+
+[[fte.role]]                       # a declared role wins over the commit count
+who = "sam.roe@example.com"        # the email in the export, or a [people] name
+role = "qa"                        # "dev" counts as FTE; anything else is overhead
+# from = "2026-11-01"              # the role holds from this date
+
+[fte.timesheet]
+folder = "1AbCdEfGhIjKlMnOp"       # the Drive folder id
+months = "Monthly"                 # the subfolder with one spreadsheet per month
+tab = "Bookings"                   # the sheet with the rows
+impersonate = "pmx-reader@your-project.iam.gserviceaccount.com"
+# account = "you@example.com"      # the gcloud account that may impersonate it
+columns = { date = "Date", email = "Email", project = "Project id", hours = "Hours" }
+```
+
+Only **developers'** hours count: people with a declared `dev` role, or with at least `min_commits`
+commits in the measured range. QA, PMs and others are overhead even if they commit now and then;
+declare their role so that stays true as they take on coding work. Hours are `h:mm` or a decimal
+number; weekend hours count on the Friday before.
+
+pmx reads the export as a Google service account through `gcloud` (no key file):
+
+1. Create a service account with no roles, and share the export folder with it, read-only.
+2. Enable the Google Drive and Google Sheets APIs in its Cloud project.
+3. Let your own account act as it: `gcloud iam service-accounts add-iam-policy-binding <sa-email>
+   --member=user:<you> --role=roles/iam.serviceAccountTokenCreator`.
+
+`collect` keeps a copy of the project's bookings in `.pmx/timesheet.json` and uses it, with a
+warning, when the export can't be read. People who booked hours but have no commits and no declared
+role are named in a warning: add a developer's git email to `[people]`, or declare the role.
+
 ## How fast, how much
 
 Each package is one request of a few thousand tokens. Expect roughly 5–30 s per package, with `jobs`

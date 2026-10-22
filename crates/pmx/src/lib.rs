@@ -13,6 +13,7 @@ pub mod people;
 pub mod pulls;
 pub mod setup;
 pub mod snapshots;
+pub mod timesheet;
 pub mod tools_install;
 pub mod velocity;
 pub mod wizard;

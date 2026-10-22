@@ -123,6 +123,8 @@ pub fn fte_periods(ws: &Workspace) -> Result<Vec<FtePeriod>> {
             let v: serde_json::Value = serde_json::from_str(&text).with_context(|| format!("{}", path.display()))?;
             fte_from_json(&v, &ws.config.project.name).with_context(|| format!("{}", path.display()))
         }
+        // Needs the commit counts, so collect fills it in after ingest (crate::timesheet).
+        FteSource::Timesheet => Ok(Vec::new()),
     }
 }
 

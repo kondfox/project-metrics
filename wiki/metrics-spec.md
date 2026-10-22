@@ -528,22 +528,35 @@ setup commands: [tool-implementation-plan.md §3](tool-implementation-plan.md#3-
   `{ "<project>": [ {"from": "2026-08-01", "to": "2026-08-31", "fte": 4.5}, {"from": "2026-09-01", "fte": 4.0} ] }`
   (open-ended `to` = until further notice). Units: full-time equivalents. `null` → Velocity falls back
   to engineer-days (§4).
-- **Time-tracking provider (decided 2026-10-22, plan D60; not built):** FTE comes from the company's
-  time-tracking export (booked hours per person, day and tracked project), read-only.
+- **Time-tracking provider (decided 2026-10-22, plan D60; built 2026-10-22 as `source = "timesheet"`,
+  overhead section not yet):** FTE comes from the company's time-tracking export (booked hours per
+  person, day and tracked project), read-only. The export is a Google Drive folder with one
+  spreadsheet per month; `[fte.timesheet]` names the folder, the sheet and the column headers, so no
+  export-specific names live in the code. pmx reads it as a service account through `gcloud`
+  (impersonation, no key file) and keeps a copy in `.pmx/` for when the export can't be read.
   - **Developers only.** A person's hours count only if they are a developer on the project. A
     **declared role wins**: a person declared non-developer (QA, PM, …) in `pmx.toml` stays overhead
     however much they commit, and a role can carry a date (`from`), so someone who really moves into
     development counts as a developer from that day. Only people with no declared role are classified
-    by commits: at least 10 non-merge commits (any branch, any alias in `[people]`, bots and externals
-    excluded, §1.3) in the project's repos over the trailing window (the threshold is a setting).
-    Everyone else's hours belong to team overhead (§4.2).
-  - **Mapping.** `[fte]` lists the tracked project ids (optionally sections) for each pmx project; one
-    pmx project can map to several tracked projects (e.g. development, scoping, support).
-  - **FTE on a day** = Σ developer hours booked on the mapped projects that day ÷ 8. Hours dated after
-    the run date are ignored; the most recent week is provisional (bookings arrive late).
+    by commits: at least `min_commits` (default 10) commits by an included author (§1.3, aliases from
+    `[people]`) on the measured branch over the measured range, so a developer who codes less for a
+    while stays a developer. A booking email is matched to an author through `[people]`, else by name
+    (accents folded, either order). Everyone else's hours belong to team overhead (§4.2); people with
+    hours, no commits and no declared role are named in a collect warning.
+  - **Mapping.** `[fte] projects` lists the tracked project ids for each pmx project; one pmx project
+    can map to several tracked projects (e.g. development, scoping, support).
+  - **Before time was tracked** (decided 2026-10-22): `[fte] value` / `periods` still apply, but only
+    on days the export doesn't cover (before the first booking month); wherever the export has a day,
+    it wins, even a day of 0.
+  - **FTE on a day** = Σ developer hours booked on the mapped projects that day ÷ 8, for every day from
+    the 1st of the first booking's month to the run date (a day without bookings is 0; before that
+    month FTE is unknown, and starting mid-month would leave the whole first month unknown). Weekend hours count on the Friday before, since FTE-days add up business days. Hours
+    dated after the run date are ignored. Not yet: marking the most recent week provisional (bookings
+    arrive late).
   - **Misbookings are fixed at the source**, not in pmx: a developer's hours booked on another project
     stay there.
-  - pmx stores only per-project sums in `project.json`; per-person hours stay in the private lead file.
+  - `project.json` holds only the per-project daily FTE; the per-person bookings stay in the
+    workspace's private state (`.pmx/timesheet.json`).
 
 ### 10.3 LLM classifier (Velocity)
 **⟂ spec change 2026-10-09:** the free-form scorer prompt is replaced by a configurable classifier with one
@@ -652,6 +665,7 @@ Values are unrounded; `null` means no data.
 | `commit_med`, `commit_p90` | §2, linear interpolation | commits with size > 0 |
 | `commits_per_dev_med` | §2 | people with ≥ 1 commit |
 | `active_devs` | §2 (same population as §5) | — |
+| `fte` | §10.2: mean FTE over the range's business days (up to `as_of`); null when a business day has none. Fleet: Σ over projects, only when every project has it | — |
 | `mix_<role>` | §2 stack mix, % of added source lines; only roles with lines anywhere in the project | added source lines |
 | `rework_pct`, `s_rework` | §3.1 | non-trivial added lines (rework walk) |
 | `test_discipline_pct`, `s_tests` | §3.2 | commits touching prod |
