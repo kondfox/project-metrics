@@ -319,6 +319,34 @@ with a change of speed.
    confirm with `[[marker]] kind = "ai"`*; with neither, the marker box says what to add.
 9. Computed in `pm-metrics` (also in the WASM engine, for any range), never in the dashboard.
 
+### 4.2 Team overhead (designed 2026-10-22, plan D61; not built)
+
+"Does the work around the code help the project or slow it down?" Velocity's FTE counts developers
+only (§10.2); everyone else who books time on the project is **overhead**.
+
+1. **v1: one overhead bucket.** All non-developer hours are shown together. The time-tracking export
+   has no usable role (its department field is the same for developers, QA and PMs), so the split by
+   role comes later.
+2. **Later: roles** QA, PM/BA, Design, Ops (only people without code commits), Other, declared per
+   person in `pmx.toml` (or read from a team list that carries roles), with dates. Hours with no
+   declared role are **Unclassified**, shown, never dropped.
+3. **Overhead FTE**, weekly and monthly, computed like developer FTE (hours ÷ 8 per business day),
+   charted stacked against developer FTE.
+4. **Overhead ratio** = overhead FTE ÷ developer FTE (per role once roles exist, e.g. QA per
+   developer); comparable across projects of different size.
+5. **Points from overhead.** Commits by people declared non-developer (§10.2) are scored like any
+   other, but their points go here, not to developer Velocity (which would otherwise get points without
+   the matching hours): points produced by overhead, and per overhead FTE-day. This is what tracks
+   QA/PM taking on easier coding work.
+6. **All-in Velocity** = all points ÷ (developer + overhead FTE-days), beside developer Velocity; the
+   gap is what the overhead costs in throughput, and it narrows when overhead roles deliver code.
+7. **Effect, read in windows:** the overhead ratio beside the outcomes it should move (change failure
+   proxy, rework, tests-with-code, Velocity and its week-to-week spread), using the same windows as
+   §4.1 (phase start, AI markers). No correlation score: with teams of a few people it would look like
+   evidence without being any.
+6. Roles only on the dashboard and in `project.json`; per-person hours stay in the private lead file.
+   Context only: no headline, no fleet column (a "QA per developer" column may come later).
+
 ---
 
 ## 5. Multi-stack developers (fleet headline) — [fullstack-metrics.md](fullstack-metrics.md)
@@ -500,6 +528,22 @@ setup commands: [tool-implementation-plan.md §3](tool-implementation-plan.md#3-
   `{ "<project>": [ {"from": "2026-08-01", "to": "2026-08-31", "fte": 4.5}, {"from": "2026-09-01", "fte": 4.0} ] }`
   (open-ended `to` = until further notice). Units: full-time equivalents. `null` → Velocity falls back
   to engineer-days (§4).
+- **Time-tracking provider (decided 2026-10-22, plan D60; not built):** FTE comes from the company's
+  time-tracking export (booked hours per person, day and tracked project), read-only.
+  - **Developers only.** A person's hours count only if they are a developer on the project. A
+    **declared role wins**: a person declared non-developer (QA, PM, …) in `pmx.toml` stays overhead
+    however much they commit, and a role can carry a date (`from`), so someone who really moves into
+    development counts as a developer from that day. Only people with no declared role are classified
+    by commits: at least 10 non-merge commits (any branch, any alias in `[people]`, bots and externals
+    excluded, §1.3) in the project's repos over the trailing window (the threshold is a setting).
+    Everyone else's hours belong to team overhead (§4.2).
+  - **Mapping.** `[fte]` lists the tracked project ids (optionally sections) for each pmx project; one
+    pmx project can map to several tracked projects (e.g. development, scoping, support).
+  - **FTE on a day** = Σ developer hours booked on the mapped projects that day ÷ 8. Hours dated after
+    the run date are ignored; the most recent week is provisional (bookings arrive late).
+  - **Misbookings are fixed at the source**, not in pmx: a developer's hours booked on another project
+    stay there.
+  - pmx stores only per-project sums in `project.json`; per-person hours stay in the private lead file.
 
 ### 10.3 LLM classifier (Velocity)
 **⟂ spec change 2026-10-09:** the free-form scorer prompt is replaced by a configurable classifier with one
