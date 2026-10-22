@@ -386,6 +386,16 @@ Mentoring pairs (PR-based) are in §8.
 
 ## 7. Security (fleet headline) — [security-index.md](security-index.md), internal notes (not published)
 
+```
+sev   = 10·dep_critical + 3·dep_high + 1·dep_moderate + 0.2·dep_low     (§7.1, third-party code)
+      + 10·sast_high    + 3·sast_medium + 1·sast_low                    (§7.4, our own code)
+score = max(1, 100 · 0.5^(sev / 250))
+        capped at 40 by an open dependency critical, a live high-confidence secret (§7.2) or an own-code high
+```
+Point-in-time (`~`), at each snapshot. Without a complete SAST scan the score is dependencies only and
+flagged `security_partial` (§7.3). Details below; why one combined load, and why 250, in
+[security-index.md](security-index.md) §2.1 and §3.
+
 ### 7.1 Dependency vulnerabilities
 - For each lockfile (configured with `security_lockfiles`, else every lockfile osv-scanner understands,
   found outside dependency and build folders), take its content **at the snapshot commit** (`git show
@@ -416,15 +426,21 @@ Mentoring pairs (PR-based) are in §8.
 
 ### 7.3 Security score
 ```
-sev   = 10·critical + 3·high + 1·moderate + 0.2·low
+sev   = 10·critical + 3·high + 1·moderate + 0.2·low            # dependency advisories (§7.1)
+      + 10·sast_high + 3·sast_medium + 1·sast_low              # own-code findings, non-test paths (§7.4)
 score = 100 · 0.5^(sev / 250)
-if critical > 0 or live_high_secrets > 0:  score = min(score, 40)    # capped at band D
+if critical > 0 or live_high_secrets > 0 or sast_high > 0:  score = min(score, 40)    # capped at band D
 score = max(1, score)
 ```
-Flagged `~` (point-in-time; no remediation-age data). Coverage is a lower bound where an ecosystem has no
-scannable lockfile.
+**Own code joined the score on 2026-10-22 (plan D63; ⟂ change vs prototype, which scored dependencies
+only).** An own-code high weighs like a dependency critical: it is in our code, so it is likely
+reachable, and it is the most actionable finding there is. If SAST didn't run on every repo of the
+snapshot (semgrep missing, rule timeouts, §7.4), the score is computed from dependencies and secrets
+only and `security_partial` = 1 says so; the dashboard names it ("own code not scanned"). Flagged `~`
+(point-in-time; no remediation-age data). Coverage is a lower bound where an ecosystem has no
+scannable lockfile, or a language the SAST rules don't cover.
 
-### 7.4 Own-code SAST (project dashboard, trend only — never ranked)
+### 7.4 Own-code SAST (project dashboard trend; counted in the Security score, §7.3)
 - `semgrep scan --metrics=off --json` with a **pinned local ruleset** on each snapshot tree. By default the
   bundled **`pmx-sast@1`** rules (decided 2026-10-11): 34 original rules, MIT OR Apache-2.0, in
   `crates/pm-snapshot/rules/pmx-sast@1/` with tests, covering injection (SQL, command, eval), unsafe
@@ -679,6 +695,7 @@ Values are unrounded; `null` means no data.
 | `vuln_critical`, `vuln_high`, `vuln_moderate`, `vuln_low`, `vuln_advisories`, `vuln_packages`, `vuln_total_packages` | §7.1 | — |
 | `secrets_high`, `secrets_low` | §7.2 | — |
 | `security_score` | §7.3 | — |
+| `security_partial` | §7.3: 1 when the score left own code out (SAST missing on a repo), else 0 | — |
 | `sast_high`, `sast_medium`, `sast_low`, `sast_new`, `sast_fixed`, `sast_per_kloc`, `sast_kloc`, `suppressions` | §7.4 | — |
 | `pr_count` | §8; absent when not measured | — |
 | `pr_cycle_median_h`, `review_coverage_pct` | §8 | merged PRs |

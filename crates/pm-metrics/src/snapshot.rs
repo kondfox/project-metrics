@@ -94,11 +94,35 @@ pub fn s_dup(x: f64) -> f64 {
     100.0 * ((15.0 - x) / 12.0).clamp(0.0, 1.0)
 }
 
-/// Security score (spec §7.3).
-pub fn security_score(critical: u64, high: u64, moderate: u64, low: u64, live_secrets: u64) -> f64 {
-    let sev = 10.0 * critical as f64 + 3.0 * high as f64 + moderate as f64 + 0.2 * low as f64;
+/// SAST findings in our own code (spec §7.4), counted when every repo was scanned.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OwnCode {
+    pub high: u64,
+    pub medium: u64,
+    pub low: u64,
+}
+
+/// Security score (spec §7.3): dependency advisories and own-code findings in one severity load;
+/// an open critical advisory, a live secret or an own-code high caps it at 40. `own` is `None`
+/// when SAST didn't run on every repo (the score is then dependencies only, flagged partial).
+pub fn security_score(
+    critical: u64,
+    high: u64,
+    moderate: u64,
+    low: u64,
+    live_secrets: u64,
+    own: Option<OwnCode>,
+) -> f64 {
+    let own = own.unwrap_or_default();
+    let sev = 10.0 * critical as f64
+        + 3.0 * high as f64
+        + moderate as f64
+        + 0.2 * low as f64
+        + 10.0 * own.high as f64
+        + 3.0 * own.medium as f64
+        + own.low as f64;
     let mut score = 100.0 * libm::pow(0.5, sev / 250.0);
-    if critical > 0 || live_secrets > 0 {
+    if critical > 0 || live_secrets > 0 || own.high > 0 {
         score = score.min(40.0);
     }
     score.max(1.0)
@@ -185,11 +209,22 @@ pub fn pool(repos: &[RepoSummary]) -> (SnapshotPoint, Option<BTreeMap<String, u3
     });
     let kloc_all = all(repos, |r| r.kloc_all).map(|v| v.iter().sum::<f64>());
     put("sast_kloc", kloc_all, None);
-    match &sast {
-        Some(list) => {
-            let (h, m, l) = list
-                .iter()
-                .fold((0, 0, 0), |a, (_, s)| (a.0 + s.high, a.1 + s.medium, a.2 + s.low));
+    let own = sast.as_ref().map(|list| {
+        list.iter().fold(OwnCode::default(), |a, (_, s)| OwnCode {
+            high: a.high + s.high,
+            medium: a.medium + s.medium,
+            low: a.low + s.low,
+        })
+    });
+    match (&sast, own) {
+        (
+            Some(list),
+            Some(OwnCode {
+                high: h,
+                medium: m,
+                low: l,
+            }),
+        ) => {
             for (r, s) in list {
                 for (k, n) in &s.keys {
                     *keys.entry(format!("{}\t{k}", r.repo)).or_insert(0) += n;
@@ -201,7 +236,7 @@ pub fn pool(repos: &[RepoSummary]) -> (SnapshotPoint, Option<BTreeMap<String, u3
             let total = (h + m + l) as f64;
             put("sast_per_kloc", kloc_all.filter(|k| *k > 0.0).map(|k| total / k), None);
         }
-        None => {
+        _ => {
             for id in ["sast_high", "sast_medium", "sast_low", "sast_per_kloc"] {
                 put(id, None, None);
             }
@@ -255,8 +290,10 @@ pub fn pool(repos: &[RepoSummary]) -> (SnapshotPoint, Option<BTreeMap<String, u3
             c(Severity::Moderate),
             c(Severity::Low),
             gate.unwrap_or(0),
+            own,
         );
         put("security_score", Some(score), None);
+        put("security_partial", Some(own.is_none() as u8 as f64), None);
     } else {
         for id in [
             "vuln_critical",
@@ -267,6 +304,7 @@ pub fn pool(repos: &[RepoSummary]) -> (SnapshotPoint, Option<BTreeMap<String, u3
             "vuln_packages",
             "vuln_total_packages",
             "security_score",
+            "security_partial",
         ] {
             put(id, None, None);
         }
@@ -323,12 +361,41 @@ mod tests {
         assert_eq!(s_dup(3.0), 100.0);
         assert_eq!(s_dup(15.0), 0.0);
         assert_eq!(s_dup(9.0), 50.0);
-        assert_eq!(security_score(0, 0, 0, 0, 0), 100.0);
+        assert_eq!(security_score(0, 0, 0, 0, 0, None), 100.0);
         // 250 points of severity halve the score.
-        assert!((security_score(0, 0, 250, 0, 0) - 50.0).abs() < 1e-9);
-        assert_eq!(security_score(1, 0, 0, 0, 0), 40.0);
-        assert_eq!(security_score(0, 0, 0, 0, 1), 40.0);
-        assert_eq!(security_score(1000, 0, 0, 0, 0), 1.0);
+        assert!((security_score(0, 0, 250, 0, 0, None) - 50.0).abs() < 1e-9);
+        assert_eq!(security_score(1, 0, 0, 0, 0, None), 40.0);
+        assert_eq!(security_score(0, 0, 0, 0, 1, None), 40.0);
+        assert_eq!(security_score(1000, 0, 0, 0, 0, None), 1.0);
+    }
+
+    #[test]
+    fn own_code_findings_join_the_security_load() {
+        let own = |high, medium, low| Some(OwnCode { high, medium, low });
+        // Own-code medium 3, low 1: 50 medium + 100 low = 250 points halve the score.
+        assert!((security_score(0, 0, 0, 0, 0, own(0, 50, 100)) - 50.0).abs() < 1e-9);
+        // An own-code high weighs like a critical advisory and caps at 40.
+        assert_eq!(security_score(0, 0, 0, 0, 0, own(1, 0, 0)), 40.0);
+        assert!(
+            (security_score(0, 0, 0, 0, 0, own(50, 0, 0)) - 25.0).abs() < 1e-9,
+            "below the cap"
+        );
+        assert_eq!(security_score(0, 0, 0, 0, 0, own(0, 0, 0)), 100.0);
+    }
+
+    #[test]
+    fn security_is_partial_without_sast() {
+        let mut a = repo("a");
+        let (p, _) = pool(std::slice::from_ref(&a));
+        assert_eq!(p.values["security_partial"], Some(0.0));
+        assert_eq!(
+            p.values["security_score"],
+            Some(40.0),
+            "the repo's own-code high caps it"
+        );
+        a.sast = None;
+        let (p, _) = pool(std::slice::from_ref(&a));
+        assert_eq!(p.values["security_partial"], Some(1.0), "dependencies only");
     }
 
     #[test]

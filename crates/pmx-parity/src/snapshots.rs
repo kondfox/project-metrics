@@ -196,16 +196,26 @@ pub fn replay(
     Ok(Replay { values, notes })
 }
 
-/// The prototype's Security score from the golden counts (parity.md §3: recompute).
+/// The Security score from the golden counts (parity.md §3: recompute), by the spec formula.
 pub fn expected_security_score(rows: &BTreeMap<(String, String, String), f64>, key: &str, month: &str) -> Option<f64> {
     let g = |m: &str| rows.get(&(key.to_string(), m.to_string(), month.to_string())).copied();
     let secrets = g("secrets_high").unwrap_or(0.0) as u64;
+    // Own-code SAST joined the score on 2026-10-22 (spec §7.3); the golden SAST counts feed it.
+    let own = match (g("sast_high"), g("sast_medium"), g("sast_low")) {
+        (Some(h), Some(m), Some(l)) => Some(pm_metrics::snapshot::OwnCode {
+            high: h as u64,
+            medium: m as u64,
+            low: l as u64,
+        }),
+        _ => None,
+    };
     Some(security_score(
         g("vuln_critical")? as u64,
         g("vuln_high")? as u64,
         g("vuln_moderate")? as u64,
         g("vuln_low")? as u64,
         secrets,
+        own,
     ))
 }
 

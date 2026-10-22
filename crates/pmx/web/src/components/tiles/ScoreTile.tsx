@@ -63,7 +63,10 @@ export function QualityTile() {
   );
 }
 
-/** The Security score (spec §7.3): point-in-time, so marked "~"; capped by criticals and secrets. */
+/**
+ * The Security score (spec §7.3): point-in-time, so marked "~"; capped by critical advisories, live
+ * secrets and own-code high findings. Without SAST it is dependencies only, and says so.
+ */
 export function SecurityTile() {
   const measured = useMeasured();
   if (!measured("dependency_vulnerabilities")) return <NotMeasuredTile id="dependency_vulnerabilities" />;
@@ -73,10 +76,15 @@ export function SecurityTile() {
       marker="~"
       note={(m) => {
         const v = m.values;
-        const capped = (v.vuln_critical ?? 0) > 0 || (v.secrets_high ?? 0) > 0;
-        const counts = `${formatNumber(v.vuln_critical)} critical · ${formatNumber(v.vuln_high)} high · ${formatNumber(v.vuln_moderate)} moderate`;
+        const partial = v.security_partial === 1;
+        const capped =
+          (v.vuln_critical ?? 0) > 0 || (v.secrets_high ?? 0) > 0 || (!partial && (v.sast_high ?? 0) > 0);
+        const deps = `dependencies ${formatNumber(v.vuln_critical)} critical · ${formatNumber(v.vuln_high)} high · ${formatNumber(v.vuln_moderate)} moderate`;
+        const own = partial
+          ? " · own code not scanned (dependencies only)"
+          : ` · own code ${formatNumber(v.sast_high)} high · ${formatNumber(v.sast_medium)} medium`;
         const secrets = measured("secrets") ? ` · ${formatNumber(v.secrets_high)} live secrets` : "";
-        return `${counts}${secrets}${capped ? " · capped at 40" : ""}`;
+        return `${deps}${own}${secrets}${capped ? " · capped at 40" : ""}`;
       }}
     />
   );

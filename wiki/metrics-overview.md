@@ -24,7 +24,7 @@ Exact definitions, formulas and inputs: **[metrics-spec.md](metrics-spec.md)**. 
 |---|---|---|---|
 | **Velocity** | How much hard work are we delivering per unit of capacity? | An LLM scores each work package's diff on six complexity axes → points; points ÷ (FTE × business days) | [spec §4](metrics-spec.md#4-velocity-fleet-headline--velocity-indexmd) · [velocity-index.md](velocity-index.md) |
 | **Quality** | Is the code healthy, and does it get worse as AI use grows? | Geometric mean of 4 sub-scores: rework (distance from the healthy 15–25% band), tests shipped with code (target 80%), docs shipped with code (target 40%), duplication (3% → 100, 15% → 0) | [spec §3](metrics-spec.md#3-quality-fleet-headline--quality-indexmd-40) · [quality-index.md](quality-index.md) |
-| **Security** | How exposed are we? | Dependency CVEs (OSV-Scanner) weighted by severity → 0–100; any open Critical or live high-confidence secret caps it at D | [spec §7](metrics-spec.md#7-security-fleet-headline--security-indexmd-own-code-securitymd) · [security-index.md](security-index.md) · internal notes (not published) |
+| **Security** | How exposed are we? | Dependency CVEs (OSV-Scanner) and our own code's SAST findings (semgrep), weighted by severity → 0–100; any open Critical, live high-confidence secret or own-code high caps it at D | [spec §7](metrics-spec.md#7-security-fleet-headline--security-indexmd-internal-notes-not-published) · [security-index.md](security-index.md) · internal notes (not published) |
 | **Multi-stack devs** | Are developers growing across stacks? | % of developers with ≥ 40 added lines in ≥ 2 stack roles in the selected period | [spec §5](metrics-spec.md#5-multi-stack-developers-fleet-headline--fullstack-metricsmd) · [fullstack-metrics.md](fullstack-metrics.md) |
 | **AI-assisted** | How agentic has our work become? | % of commits with a `Co-Authored-By: Claude` trailer (hidden where trailers are stripped) | [spec §6](metrics-spec.md#6-ai-assisted-fleet-headline) · [ai-agentic-productivity.md](ai-agentic-productivity.md) |
 | **Peer review** | Does code get reviewed? | % of merged PRs/MRs with ≥ 1 human non-author review | [spec §8](metrics-spec.md#8-code-host-prmr-flow--peer-review-fleet-column--project-panels) |
@@ -37,7 +37,7 @@ Exact definitions, formulas and inputs: **[metrics-spec.md](metrics-spec.md)**. 
 | Quality | rework %, tests/docs shipped with code, duplication %, complexity/KLOC (trend only), hotspots |
 | Velocity | points per FTE-day per week/month; points/commit, points/KLOC; FTE; packages by size; commits and lines added, commit size (median/p90), commits per dev (context) |
 | AI | AI-assisted commits/lines %, AI vs human comparison (size, tests, docs) over 12 months |
-| Security | open dependency vulns by severity over time; own-code SAST findings (trend only); new/fixed findings, live secrets, suppressions |
+| Security | open dependency vulns by severity over time; own-code SAST findings (also in the score); new/fixed findings, live secrets, suppressions |
 | Flow & people | merged PRs, peer review %, PR cycle time, review wait, PR size (GitHub), mentoring pairs; multi-stack %, breadth index, techs per dev, active devs, stack mix |
 
 ## Where the data comes from

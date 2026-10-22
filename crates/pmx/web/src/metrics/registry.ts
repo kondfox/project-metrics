@@ -183,7 +183,14 @@ export const METRICS = {
   security_score: {
     label: "Security",
     unit: "score",
-    description: "dependency advisories by severity; an open critical or a live secret caps it at 40",
+    description:
+      "dependency advisories and own-code SAST findings by severity; an open critical, a live secret or an own-code high caps it at 40",
+    spec: "§7.3",
+  },
+  security_partial: {
+    label: "Security (dependencies only)",
+    unit: "count",
+    description: "1 when SAST didn't run on every repo, so the score leaves own code out",
     spec: "§7.3",
   },
   vuln_critical: { label: "Critical", unit: "count", spec: "§7.1" },

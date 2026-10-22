@@ -1,9 +1,11 @@
-# Security index — point-in-time dependency-vulnerability score
+# Security index — point-in-time score for dependencies and our own code
 
-**Status:** v1 shipped 2026-09-15. Turns the fleet's raw "Vulns (crit / high)" column into a
-0–100 **Security score + A–E band**, consistent with [Quality](quality-index.md) and
-[Velocity](velocity-index.md). Kept a **separate column** (not folded into the Quality gate) —
-it becomes the `gate_vuln` term in `quality-index.md` §4.1 only once remediation-age data exists.
+**Status:** v1 shipped 2026-09-15 (dependency advisories); own-code SAST findings joined it on
+2026-10-22 (plan D63). Turns the fleet's raw "Vulns (crit / high)" column into a 0–100 **Security
+score + A–E band**, consistent with [Quality](quality-index.md) and [Velocity](velocity-index.md). Kept
+a **separate column** (not folded into the Quality gate) — it becomes the `gate_vuln` term in
+`quality-index.md` §4.1 only once remediation-age data exists. The normative formula is
+[spec §7](metrics-spec.md#7-security-fleet-headline--security-indexmd-internal-notes-not-published).
 
 ## 1. Why a score, not a raw count
 
@@ -16,20 +18,38 @@ Critical is the enforceable red line, and severity/exposure grades the rest.
 ## 2. Formula
 
 ```
-sev   = 10·critical + 3·high + 1·moderate + 0.2·low      # severity-weighted exposure load
+sev   = 10·critical + 3·high + 1·moderate + 0.2·low      # dependency advisories
+      + 10·sast_high + 3·sast_medium + 1·sast_low        # own-code SAST findings (since D63)
 base  = 100 · 0.5^(sev / H)                              # fixed-scale exponential decay
-score = min(base, 40)  if critical > 0  else base        # any open Critical ⇒ at best band D
+score = min(base, 40)  if red line  else base            # red line ⇒ at best band D
 score = max(1, score)
 band  = A≥90 · B≥75 · C≥55 · D≥30 · E<30                 # same fixed cut-points as Quality
 ```
+Red line: an open dependency Critical, a live high-confidence secret, or an own-code high.
 
 **Fixed constants (this is the "documented once" yardstick, not fleet-derived):**
 
 | Constant | Value | Meaning |
 |---|---|---|
-| severity weights | 10 / 3 / 1 / 0.2 | critical / high / moderate / low — CVSS-shaped, criticals dominate |
-| `H` (half-load) | **250** | every 250 weighted-severity points halves the score |
-| critical cap | **40** | an open Critical trips the gate → score capped at the top of band D |
+| dependency weights | 10 / 3 / 1 / 0.2 | critical / high / moderate / low — CVSS-shaped, criticals dominate |
+| own-code weights | 10 / 3 / 1 | high / medium / low — one level above dependencies (below) |
+| `H` (half-load) | **250** | every 250 weighted-severity points halves the score (§3) |
+| red-line cap | **40** | trips the gate → score capped at the top of band D |
+
+### 2.1 Why one load for both sources
+
+- **Same kind of thing:** an advisory and a SAST finding are both known, open, exploitable defects;
+  severity-weighted counting answers "how much risk is open", wherever the door is.
+- **Better than combining two sub-scores:** an average lets a clean side hide a dirty one and needs
+  an arbitrary split between sources; the worse-of-two ignores fixes on the other side. One load keeps
+  every finding's cost proportional to its severity, and needs no new constant.
+- **Own code weighs one level higher:** a SAST finding is in code we run (many advisories sit in
+  paths never called) and we can fix it ourselves.
+- **The gate on top** keeps a red-line finding from hiding in a low load; below 40 the load still
+  grades projects.
+- **Limits:** a false-positive own-code high caps a project at 40, and reviewed findings can't be
+  dismissed yet (a SAST triage list, like secrets', is the follow-up); own-code counts are small, so
+  SAST acts mostly through the cap; languages the rules barely cover look clean (a lower bound).
 
 Counts are **absolute**, not per-dependency: an open Critical is an exploitable door regardless of
 how large the dependency tree is, and this matches the absolute `gate_vuln` intent. Per-package rate
@@ -49,6 +69,20 @@ band edge:
 Chosen **H = 250**. Reads honestly: Project C (no criticals) lands **C** on its remaining high/moderate
 load; Project B (14 crit) and Project A (45 crit) both land **E**, distinguished by the raw score (19 vs 2). The
 critical-cap guarantees no project with an open Critical can ever read better than **D**.
+
+**What 250 means** (no red-line finding): 250 points ≈ 25 criticals, 83 highs or 250 moderates.
+
+| Band | Load allowed | Roughly |
+|---|---|---|
+| A (≥ 90) | ≤ 38 | up to ~12 highs |
+| B (≥ 75) | ≤ 104 | up to ~35 highs |
+| C (≥ 55) | ≤ 216 | up to ~72 highs |
+| D (≥ 30) | ≤ 434 | up to ~145 highs |
+
+It is a judgement fitted to three projects, on dependency counts only (own code joined later and adds
+little load). It matters less than the cap: it grades projects without red-line findings, and how
+far below 40 the gated ones fall. **Re-check when the fleet grows:** score every project at H = 200,
+250, 300 and 350, keep the value that leaves the most projects mid-band, and record it as a decision.
 
 ## 4. Point-in-time caveat (marked `~`)
 
