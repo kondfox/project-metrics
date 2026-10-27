@@ -1,4 +1,4 @@
-import { buildTimeSeriesOption, type TimeSeriesInput } from "./timeSeriesOption";
+import { buildTimeSeriesOption, chartMarks, type TimeSeriesInput } from "./timeSeriesOption";
 
 const theme = { ink: "#000", muted: "#666", line: "#ddd", faint: "#eee", good: "#0a0", series: ["#a", "#b"] };
 
@@ -63,6 +63,17 @@ describe("buildTimeSeriesOption", () => {
     expect((buildTimeSeriesOption(input()) as unknown as Opt).series[0]!.markLine).toBeUndefined();
   });
 
+  it("titles the tooltip with the bucket's dates", () => {
+    const format = (o: unknown, value: string) =>
+      (
+        o as { xAxis: { axisPointer: { label: { formatter: (p: { value: string }) => string } } } }
+      ).xAxis.axisPointer.label.formatter({ value });
+    const spans = ["2026-09-14 – 2026-09-20", "2026-09-21 – 2026-09-27", "2026-09-28 – 2026-10-04"];
+    const o = buildTimeSeriesOption(input({ spans }));
+    expect(format(o, "2026-W40*")).toBe("2026-W40*\n2026-09-28 – 2026-10-04");
+    expect(format(buildTimeSeriesOption(input()), "2026-W38")).toBe("2026-W38");
+  });
+
   it("adds a right axis only when a series uses it", () => {
     expect((buildTimeSeriesOption(input()) as unknown as Opt).yAxis).toHaveLength(1);
     const two = input({
@@ -72,5 +83,26 @@ describe("buildTimeSeriesOption", () => {
       ],
     });
     expect((buildTimeSeriesOption(two) as unknown as Opt).yAxis).toHaveLength(2);
+  });
+});
+
+describe("chartMarks", () => {
+  // Weekly buckets: W38 from 2026-09-14, W39 from 2026-09-21; nothing before.
+  const bucketOf = (date: string) => (date < "2026-09-14" ? -1 : date < "2026-09-21" ? 0 : 1);
+
+  it("combines the events of one bucket into one hover label", () => {
+    const marks = chartMarks(
+      [
+        { date: "2026-09-21", label: "AI rollout", kind: "marker" },
+        { date: "2026-09-01", label: "pilot", kind: "phase" },
+        { date: "2026-09-14", label: "development", kind: "phase" },
+        { date: "2026-09-16", label: "CLAUDE.md added", kind: "marker" },
+      ],
+      bucketOf,
+    );
+    expect(marks).toEqual([
+      { index: 0, label: "development\nCLAUDE.md added", kind: "phase" },
+      { index: 1, label: "AI rollout", kind: "marker" },
+    ]);
   });
 });

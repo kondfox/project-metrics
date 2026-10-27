@@ -5,7 +5,7 @@ import { metricDef, type MetricId } from "../../metrics/registry";
 import { useChartBuckets, useDashboard, useLowN } from "../../state/hooks";
 import { useChartTheme } from "./chartTheme";
 import { EChart } from "./EChart";
-import { buildTimeSeriesOption, type ChartMark, type SeriesSpec } from "./timeSeriesOption";
+import { buildTimeSeriesOption, chartMarks, type SeriesSpec } from "./timeSeriesOption";
 import styles from "./charts.module.css";
 
 export type MetricSeries = Omit<SeriesSpec, "values" | "n" | "label"> &
@@ -35,28 +35,25 @@ export function TimeSeriesChart(props: {
   const showMarks = props.marks ?? false;
   const option = useMemo(() => {
     const pick = <T,>(xs: T[]) => indices.map((i) => xs[i] ?? null);
-    // Each phase start and marker at the bucket holding its date; several in one bucket share a line.
-    const at = new Map<number, ChartMark>();
-    if (showMarks) {
-      const events = [
-        ...timeline.phases.map((p) => ({ date: p.from, label: p.name, kind: "phase" as const })),
-        ...timeline.markers.map((m) => ({ date: m.date, label: m.name, kind: "marker" as const })),
-      ].sort((a, b) => a.date.localeCompare(b.date));
-      for (const e of events) {
-        const k = indices.findIndex((i) => {
-          const r = buckets.ranges[i]!;
-          return formatDate(r.start) <= e.date && e.date <= formatDate(r.end);
-        });
-        if (k < 0) continue;
-        const prev = at.get(k);
-        at.set(
-          k,
-          prev ? { ...prev, label: `${prev.label} · ${e.label}`, kind: prev.kind } : { index: k, ...e },
-        );
-      }
-    }
+    const marks = showMarks
+      ? chartMarks(
+          [
+            ...timeline.phases.map((p) => ({ date: p.from, label: p.name, kind: "phase" as const })),
+            ...timeline.markers.map((m) => ({ date: m.date, label: m.name, kind: "marker" as const })),
+          ],
+          (date) =>
+            indices.findIndex((i) => {
+              const r = buckets.ranges[i]!;
+              return formatDate(r.start) <= date && date <= formatDate(r.end);
+            }),
+        )
+      : [];
     return buildTimeSeriesOption({
       labels: indices.map((i) => buckets.labels[i]!),
+      spans: indices.map((i) => {
+        const r = buckets.ranges[i]!;
+        return `${formatDate(r.start)} – ${formatDate(r.end)}`;
+      }),
       inRange,
       partialLast: buckets.lastIsPartial && indices.at(-1) === buckets.labels.length - 1,
       isLowN,
@@ -65,7 +62,7 @@ export function TimeSeriesChart(props: {
       decimals,
       band,
       max,
-      marks: [...at.values()],
+      marks,
       series: series.map((s) =>
         "of" in s
           ? { ...s, values: indices.map((i) => s.of(buckets.ranges[i]!)) }
